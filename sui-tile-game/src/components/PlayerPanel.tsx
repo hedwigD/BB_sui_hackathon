@@ -4,46 +4,33 @@ type Props = {
   players: Player[];
   currentTurn: string;
   turnTimeLeft?: number;
+  playerConfig: any;
 };
 
-const playerConfig = {
-  p1: { 
-    avatar: "🦸‍♂️", 
-    name: "Hero", 
-    bgGradient: "from-blue-400 to-blue-600",
-    borderColor: "border-blue-500",
-    glowColor: "shadow-blue-500/50"
-  },
-  p2: { 
-    avatar: "🦹‍♀️", 
-    name: "Villain", 
-    bgGradient: "from-red-400 to-red-600",
-    borderColor: "border-red-500",
-    glowColor: "shadow-red-500/50"
-  }
-};
-
-export default function PlayerPanel({ players, currentTurn, turnTimeLeft = 3 }: Props) {
+export default function PlayerPanel({ players, currentTurn, turnTimeLeft = 3, playerConfig }: Props) {
   return (
     <div className="flex justify-center space-x-8 mb-6">
-      {players.map((player) => {
+      {players.map((player, index) => {
         const isCurrentTurn = currentTurn === player.id;
         const config = playerConfig[player.id as keyof typeof playerConfig];
+        const isLeftSide = index === 0;
         
         return (
           <div
             key={player.id}
-            className={`relative transform transition-all duration-300 ${
-              isCurrentTurn ? "scale-110" : "scale-100 opacity-75"
+            className={`relative transform transition-all duration-500 ${
+              isCurrentTurn ? "scale-105" : "scale-100 opacity-80"
             }`}
           >
-            {/* Player Card */}
+            {/* Chess.com style player card */}
             <div
               className={`
-                relative p-6 rounded-2xl border-4 ${config.borderColor} 
-                bg-gradient-to-br ${config.bgGradient} text-white
-                shadow-2xl ${isCurrentTurn ? `${config.glowColor} shadow-2xl animate-pulse` : ""}
+                relative p-6 rounded-xl border-2 
+                ${isCurrentTurn ? 'border-yellow-400 bg-slate-800' : 'border-slate-600 bg-slate-900/80'}
+                text-white shadow-2xl backdrop-blur-sm
+                ${isCurrentTurn ? 'shadow-yellow-400/20' : ''}
                 transition-all duration-300
+                ${isLeftSide ? 'text-left' : 'text-right'}
               `}
             >
               {/* Avatar */}

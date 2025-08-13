@@ -1,15 +1,27 @@
 import { useSuiGame } from "./hooks/useSuiGame";
-import GameBoard from "./components/GameBoard";
+import EnhancedGameBoard from "./components/EnhancedGameBoard";
 import PlayerPanel from "./components/PlayerPanel";
 import GameStats from "./components/GameStats";
 import PlayerCustomization from "./components/PlayerCustomization";
+import KeyboardIndicator from "./components/KeyboardIndicator";
 import { useSoundEffects } from "./hooks/useSoundEffects";
+import { useKeyboardControls } from "./hooks/useKeyboardControls";
 import { useState } from "react";
 
 function App() {
   const { state, movePlayer, startGame, resetGame, customizePlayers, playerConfig, turnTimeLeft, totalMoves } = useSuiGame();
   const soundEffects = useSoundEffects();
   const [showCustomization, setShowCustomization] = useState(false);
+  
+  // Keyboard controls for current player
+  useKeyboardControls(
+    (direction) => {
+      if (state.phase === "playing") {
+        movePlayer(state.currentTurn, direction);
+      }
+    },
+    state.phase === "playing"
+  );
 
   // Determine winner
   function getGameResult() {
@@ -79,16 +91,18 @@ function App() {
           players={state.players} 
           currentTurn={state.currentTurn} 
           turnTimeLeft={turnTimeLeft}
+          playerConfig={playerConfig}
         />
         
-        {/* Game Board */}
-        <GameBoard
+        {/* Enhanced Game Board */}
+        <EnhancedGameBoard
           boardSize={state.boardSize}
           players={state.players}
           suiTiles={state.suiTiles}
           onMove={movePlayer}
           currentTurn={state.currentTurn}
           phase={state.phase}
+          playerConfig={playerConfig}
         />
         
         {/* Game Status */}
@@ -99,7 +113,8 @@ function App() {
               <p>🦸‍♂️ Control your hero to capture precious Sui gems 💎</p>
               <p>⏱️ Each turn lasts 3 seconds - think fast!</p>
               <p>🏆 Capture more gems than your opponent to win!</p>
-              <p>🔄 Use arrow buttons to move around the battlefield</p>
+              <p>⌨️ Use WASD keys or Arrow keys to move</p>
+              <p>🖱️ Or click the directional buttons on screen</p>
             </div>
           </div>
         )}
@@ -139,6 +154,9 @@ function App() {
             soundEffects.buttonClick();
           }}
         />
+        
+        {/* Keyboard Controls Indicator */}
+        <KeyboardIndicator isVisible={state.phase === "playing"} />
       </div>
     </div>
   );
