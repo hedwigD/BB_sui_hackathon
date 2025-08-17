@@ -34,6 +34,9 @@ module game::grid_hunt {
     struct CellCommit has store, drop {
         // H(x||y||salt) 의 32바이트 등
         h: vector<u8>,
+
+        // 권정헌:제가짠 코드에 claimed사용하는 부분이없어서 지워도될것같은데
+        // 상현님 코드다짜고 확인해주세요 쓸데잇는지 없으면지워도댈듯
         claimed: bool,
     }
 
@@ -64,6 +67,14 @@ module game::grid_hunt {
         // 커밋 맵: idx(0..99) → CellCommit
         // Dynamic Field: owner=Game.id, key=CellKey, value=CellCommit
     }
+
+    // 게임종료 이벤트
+    struct GameEndedEvent has drop, store {
+        game_id: ID,
+        winner: option::Option<address>,
+        timestamp_ms: u64,
+    }
+
 
     // ── 핵심 entry ─────────────────────────────────────────────
     public entry fun create_game(ctx: &mut TxContext) { /* share_object */ }
@@ -96,36 +107,70 @@ module game::grid_hunt {
         // 초기 위치 등 나머지 설정…
     }
     
-    public entry fun move_dir(game: &mut Game, dir: u8, clk: &Clock, ctx: &mut TxContext) {
-        // … (상태/턴/데드라인 체크) <<<이거 일단생략했는데 나중에 코드 채우기!!!
+    public entry fun move_dir(
+        game: &mut Game,
+        dir: u8,
+        x: u8,
+        y: u8,
+        salt: vector<u8>,
+        clk: &Clock,
+        ctx: &mut TxContext
+    ) {
+        assert!(game.started, E_NOT_STARTED);
+        assert!(!game.finished, E_ALREADY_FINISHED);
+        assert!(now_ms(clk) <= game.deadline_ms, E_DEADLINE_PASSED);
+
+        let mut new_pos;
+        let mut addr;
 
         if (game.next_turn == 1) {
             let (np, ok) = step(game.p1.pos, dir);
             assert!(ok, E_HIT_WALL);
             game.p1.pos = np;
             game.p1.last_dir = dir;
-
-            // 변경: ctx 없이 즉시 코인 전송
-            try_claim(game, np, game.p1.addr);
-
+            new_pos = np;
+            addr = game.p1.addr;
             game.next_turn = 2;
         } else {
             let (np, ok) = step(game.p2.pos, dir);
             assert!(ok, E_HIT_WALL);
             game.p2.pos = np;
             game.p2.last_dir = dir;
-
-            try_claim(game, np, game.p2.addr);
-
+            new_pos = np;
+            addr = game.p2.addr;
             game.next_turn = 1;
         };
 
+        // 이동한 위치와 x/y/salt로 커밋 해시 검증 > 성공하면 바로 claim 함수 호출
+        if (reveal_cell_internal(game, new_pos, x, y, salt)) {
+            try_claim(game, new_pos, addr);
+        };
+
         game.deadline_ms = now_ms(clk) + TURN_MS;
+        try_end_game(game, clk, ctx);
     }
+
     
-    public entry fun tick_after_deadline(game: &mut Game, clock: &Clock, ctx: &mut TxContext) { /* auto-advance or skip */ }
-    public entry fun reveal_cell(game: &mut Game, x: u8, y: u8, salt: vector<u8>, clock: &Clock, ctx: &mut TxContext) { /* verify commit + pay out */ }
-    public entry fun end_or_claim_rest(game: &mut Game, ctx: &mut TxContext) { /* finalize */ }
+    // 이 함수를 프론트에서 now>deadline이 되면 호출해야할듯 하네요
+    public entry fun tick_after_deadline(game: &mut Game, clock: &Clock, _ctx: &mut TxContext) {
+        // 시작전이면 에러코드 10, 끝난후면 11반환
+        assert!(game.started, 10);
+        assert!(!game.finished, 11);
+
+        let now = now_ms(clock);
+        // 아직 기한 안 지났으면 아무것도 하지 않음 (리버트)
+        assert!(now > game.deadline_ms, 12);
+
+        // 턴 넘기기만 하고 위치는 유지
+        if (game.next_turn == 1) {
+            game.next_turn = 2;
+        } else {
+            game.next_turn = 1;
+        };
+
+        game.deadline_ms = now + TURN_MS;
+    }
+
 
     // ── 내부 유틸 ──────────────────────────────────────────────
     fun index(x: u8, y: u8): u16 { /* y*10 + x */ 
@@ -177,4 +222,60 @@ module game::grid_hunt {
             transfer::public_transfer(coin, to);
         }
     }
+
+    // movedir 내부에서만 호출되도록 내부 함수로 바꿈
+    fun reveal_cell_internal(
+        game: &Game,
+        idx: u16,
+        x: u8,
+        y: u8,
+        salt: vector<u8>
+    ): bool {
+        if (!dynamic_field::exists_with_type<CellKey, CellCommit>(&game.id, CellKey { idx })) {
+            return false;
+        };
+
+        let commit = dynamic_field::borrow<CellKey, CellCommit>(&game.id, CellKey { idx });
+
+        let mut bytes = vector::empty<u8>();
+        vector::push_back(&mut bytes, x);
+        vector::push_back(&mut bytes, y);
+        vector::append(&mut bytes, salt);
+
+        let h = hash::sha3_256(bytes);
+
+        // 해시가 일치하면 성공
+        h == commit.h
+    }
+
+    /// 내부 유틸: 모든 셀의 코인이 소진되었는지 확인하고 게임을 종료함.
+    /// 외부 호출 금지. move_dir 등에서 자동 호출됨.
+    fun try_end_game(game: &mut Game, clock: &Clock, ctx: &mut TxContext) {
+        if (game.finished) {
+            return;
+        };
+
+        let mut i = 0;
+        while (i < CELLS) {
+            if (dynamic_field::exists_with_type<CoinKey, Coin<SUI>>(&game.id, CoinKey{ idx: i })) {
+                return; // 아직 남은 보상 있음
+            };
+            i = i + 1;
+        };
+
+        // 모든 보상 전송 완료 → 게임 종료
+        game.finished = true;
+        //이벤트 발생
+        emit<GameEndedEvent>(
+            GameEndedEvent {
+                game_id: object::id(&game),
+                winner: option::none<address>(),
+                timestamp_ms: clock::timestamp_ms(clock),
+            },
+            ctx,
+        );
+    }
+
+
+
 }
