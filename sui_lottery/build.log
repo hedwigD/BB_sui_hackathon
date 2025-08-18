@@ -1,0 +1,15 @@
+[note] Dependencies on Bridge, MoveStdlib, Sui, and SuiSystem are automatically added, but this feature is disabled for your package because you have explicitly included dependencies on Sui. Consider removing these dependencies from Move.toml.
+UPDATING GIT DEPENDENCY https://github.com/MystenLabs/sui.git
+INCLUDING DEPENDENCY Sui
+INCLUDING DEPENDENCY MoveStdlib
+BUILDING sui_lottery
+[0m[1m[38;5;11mwarning[Lint W99003][0m[1m: sub-optimal 'sui::coin::Coin' field type[0m
+   [0m[34m┌─[0m ./sources/sui_lottery.move:57:14
+   [0m[34m│[0m
+[0m[34m57[0m [0m[34m│[0m         pot: [0m[33mCoin<SUI>[0m,
+   [0m[34m│[0m              [0m[33m^^^^^^^^^[0m [0m[33mSub-optimal 'sui::coin::Coin' field type. Using 'sui::balance::Balance' instead will be more space efficient[0m
+   [0m[34m│[0m
+   [0m[34m=[0m This warning can be suppressed with '#[allow(lint(coin_field))]' applied to the 'module' or module member ('const', 'fun', or 'struct')
+
+Please report feedback on the linter warnings at https://forums.sui.io
+
