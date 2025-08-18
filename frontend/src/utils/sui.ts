@@ -1,4 +1,5 @@
-import { SuiClient } from '@mysten/sui/client';
+import { SuiClient } from '@mysten/sui.js/client';
+import { TransactionBlock } from '@mysten/sui.js/transactions';
 
 
 // Configuration
@@ -6,23 +7,50 @@ export const NETWORK = 'testnet';
 export const SUI_CLIENT = new SuiClient({ url: `https://fullnode.${NETWORK}.sui.io:443` });
 
 // Contract configuration - Updated with deployed contract details
-export const PACKAGE_ID = '0x0b786cc1ea1eb7a4621da7e8526f9d8a62a43db7199641c41ce53f52de0ebfd7'; // Deployed package
-export const REGISTRY_ID = '0xd2bf5307f595161a43d5975c6dff8aa814633f68305ca4cefcf388d433a003a8'; // Shared GameRegistry
+export const PACKAGE_ID = '0x2e5b7573c70d371547138f89e09983369a4e2fec29ec60c0ace0c6f6f83aabca'; // Deployed package
+export const REGISTRY_ID = '0x035ceb3c222813a6c25b851e61733b5ff0e9fff8525fe64bad1d02f03f0adb71'; // Shared GameRegistry
 export const CLOCK_ID = '0x6'; // Sui system clock
+export const BOARD_SIZE = 11; // Game board size
 
 export async function createGame(registryId: string) {
-  // Placeholder - needs proper transaction implementation
-  throw new Error('Transaction implementation needed');
+  const tx = new TransactionBlock();
+  
+  tx.moveCall({
+    target: `${PACKAGE_ID}::tile_game_core::create_game`,
+    arguments: [
+      tx.object(registryId),
+    ],
+  });
+  
+  return tx;
 }
 
 export async function joinGame(gameId: string) {
-  // Placeholder - needs proper transaction implementation
-  throw new Error('Transaction implementation needed');
+  const tx = new TransactionBlock();
+  
+  tx.moveCall({
+    target: `${PACKAGE_ID}::tile_game_core::join_game`,
+    arguments: [
+      tx.object(gameId),
+    ],
+  });
+  
+  return tx;
 }
 
 export async function startGame(gameId: string, fundingCoinId: string) {
-  // Placeholder - needs proper transaction implementation
-  throw new Error('Transaction implementation needed');
+  const tx = new TransactionBlock();
+  
+  tx.moveCall({
+    target: `${PACKAGE_ID}::tile_game_core::start_game`,
+    arguments: [
+      tx.object(gameId),
+      tx.object(fundingCoinId), // funding coin
+      tx.object(CLOCK_ID), // clock
+    ],
+  });
+  
+  return tx;
 }
 
 export async function moveWithCap(
@@ -30,13 +58,39 @@ export async function moveWithCap(
   moveCapId: string,
   direction: number
 ) {
-  // Placeholder - needs proper transaction implementation
-  throw new Error('Transaction implementation needed');
+  const tx = new TransactionBlock();
+  
+  tx.moveCall({
+    target: `${PACKAGE_ID}::tile_game_core::move_with_cap`,
+    arguments: [
+      tx.object(gameId),
+      tx.object(moveCapId), // move cap
+      tx.pure.u8(direction), // direction
+      tx.object(CLOCK_ID), // clock
+    ],
+  });
+  
+  return tx;
 }
 
 export async function forceTimeoutMove(gameId: string) {
-  // Placeholder - needs proper transaction implementation
-  throw new Error('Transaction implementation needed');
+  const tx = new TransactionBlock();
+  
+  tx.moveCall({
+    target: `${PACKAGE_ID}::tile_game_core::force_timeout_move`,
+    arguments: [
+      tx.object(gameId),
+      tx.object(CLOCK_ID), // clock
+    ],
+  });
+  
+  return tx;
+}
+
+// This function is not needed when using Suiet wallet kit
+// The wallet kit handles transaction signing automatically
+export async function signAndExecuteTransactionBlock(tx: TransactionBlock, signerAddress: string, walletType?: string) {
+  throw new Error('Use Suiet wallet kit signAndExecuteTransactionBlock instead');
 }
 
 export async function fetchGame(gameId: string) {

@@ -1,3 +1,6 @@
-active addr : 0xeb0ff8d78cc78a53e45e0bbf6065a218e661490d36c7e6e27ef1a5838457bead
-
-gas coin : 0x38fe73dc1c1dbb986c70662eb99ff260e95b9783777f1c8c6a4a4283687c9f78
+  Key deployment details:
+  - Package ID: 0x2e5b7573c70d371547138f89e09983369a4e2fec29ec60c0ace0c6f6f83aabca
+  - Transaction: 3dxDAGjG8jWUx1gbyqQ5L9x5Ybjjv3fxxyovrnzAC3jh
+  - GameRegistry (Shared Object): 0x035ceb3c222813a6c25b851e61733b5ff0e9fff8525fe64bad1d02f03f0adb71
+  - UpgradeCap: 0xc7e0adf90a72e60d4aee825cfb1f8f46140f9ac0fe935f86eb4d49dd0033f634
+  - Gas Cost: ~0.047 SUI

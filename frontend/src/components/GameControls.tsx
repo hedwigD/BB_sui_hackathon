@@ -1,5 +1,5 @@
 import React from 'react';
-import { useSignAndExecuteTransaction } from '@mysten/dapp-kit';
+import { useWallet } from '@suiet/wallet-kit';
 import { DIRECTIONS, DIRECTION_NAMES, GameState, MoveCap } from '../types/game';
 import { moveWithCap, forceTimeoutMove } from '../utils/sui';
 
@@ -20,16 +20,19 @@ export function GameControls({
   timeRemaining,
   onError 
 }: GameControlsProps) {
-  const { mutateAsync: signAndExecuteTransaction } = useSignAndExecuteTransaction();
+  const { account, signAndExecuteTransactionBlock } = useWallet();
 
   const handleMove = async (direction: number) => {
-    if (!moveCap || !isMyTurn) return;
+    if (!moveCap || !isMyTurn || !account) return;
     
     try {
       const tx = await moveWithCap(gameState.id, moveCap.id, direction);
       
-      const result = await signAndExecuteTransaction({
-        transaction: tx,
+      const result = await signAndExecuteTransactionBlock({
+        transactionBlock: tx as any,
+        options: {
+          showEffects: true,
+        }
       });
       console.log('Move successful', result);
     } catch (error) {
@@ -38,13 +41,16 @@ export function GameControls({
   };
 
   const handleForceTimeout = async () => {
-    if (!canForceTimeout) return;
+    if (!canForceTimeout || !account) return;
     
     try {
       const tx = await forceTimeoutMove(gameState.id);
       
-      const result = await signAndExecuteTransaction({
-        transaction: tx,
+      const result = await signAndExecuteTransactionBlock({
+        transactionBlock: tx as any,
+        options: {
+          showEffects: true,
+        }
       });
       console.log('Force timeout successful', result);
     } catch (error) {

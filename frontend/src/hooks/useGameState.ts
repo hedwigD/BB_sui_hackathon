@@ -1,11 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useCurrentAccount } from '@mysten/dapp-kit';
+import { useWallet } from '@suiet/wallet-kit';
 import { GameState, MoveCap, TURN_TIMEOUT_MS } from '../types/game';
 import { SUI_CLIENT, PACKAGE_ID, fetchGame, fetchMoveCap, parseGameContent, parseMoveCapContent } from '../utils/sui';
 
 export function useGameState(gameId: string | null) {
-  const currentAccount = useCurrentAccount();
-  const account = currentAccount ? { address: currentAccount.address } : null;
+  const { account } = useWallet();
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [moveCap, setMoveCap] = useState<MoveCap | null>(null);
   const [myIndex, setMyIndex] = useState<number | null>(null);

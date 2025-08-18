@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useCurrentAccount, useSignAndExecuteTransaction } from '@mysten/dapp-kit';
+import { useWallet } from '@suiet/wallet-kit';
 import { GameState, MAX_TILES } from '../types/game';
 import { createGame, joinGame, startGame, findSuiCoin } from '../utils/sui';
 import { REGISTRY_ID } from '../utils/sui';
@@ -10,9 +10,7 @@ interface GameLobbyProps {
 }
 
 export function GameLobby({ onGameCreated, onError }: GameLobbyProps) {
-  const currentAccount = useCurrentAccount();
-  const { mutateAsync: signAndExecuteTransaction } = useSignAndExecuteTransaction();
-  const account = currentAccount ? { address: currentAccount.address } : null;
+  const { account, signAndExecuteTransactionBlock } = useWallet();
   const [joinGameId, setJoinGameId] = useState('');
   const [isCreating, setIsCreating] = useState(false);
   const [isJoining, setIsJoining] = useState(false);
@@ -27,15 +25,48 @@ export function GameLobby({ onGameCreated, onError }: GameLobbyProps) {
       setIsCreating(true);
       const tx = await createGame(REGISTRY_ID);
       
-      const result = await signAndExecuteTransaction({
-        transaction: tx,
+      const result = await signAndExecuteTransactionBlock({
+        transactionBlock: tx as any,
+        options: {
+          showEffects: true,
+          showEvents: true,
+        }
       });
       
-      // Extract game ID from transaction effects
-      const gameId = extractGameIdFromEffects(result.effects);
+      console.log('=== TRANSACTION RESULT ===');
+      console.log('Result keys:', Object.keys(result));
+      console.log('Events:', result.events);
+      console.log('Effects:', result.effects);
+      console.log('Full result:', result);
+      
+      // Try to extract game ID from events first (most reliable)
+      let gameId = extractGameIdFromEvents(result.events);
+      
+      // Fallback to effects
+      if (!gameId) {
+        gameId = extractGameIdFromEffects(result.effects);
+      }
+      
+      // Last resort: look for any object ID in the result
+      if (!gameId && result.effects?.created && result.effects.created.length > 0) {
+        // Get the first created object (should be the Game)
+        const firstCreated = result.effects.created[0];
+        console.log('First created object:', firstCreated);
+        if (firstCreated.reference?.objectId) {
+          gameId = firstCreated.reference.objectId;
+        } else if ((firstCreated as any).objectId) {
+          gameId = (firstCreated as any).objectId;
+        }
+      }
+      
+      console.log('Extracted game ID:', gameId);
+      
       if (gameId) {
         onGameCreated(gameId);
       } else {
+        console.error('Could not find game ID in any of these locations:');
+        console.error('- Events:', result.events);
+        console.error('- Effects:', result.effects);
         onError('Failed to extract game ID from transaction');
       }
     } catch (error) {
@@ -55,8 +86,11 @@ export function GameLobby({ onGameCreated, onError }: GameLobbyProps) {
       setIsJoining(true);
       const tx = await joinGame(joinGameId.trim());
       
-      await signAndExecuteTransaction({
-        transaction: tx,
+      await signAndExecuteTransactionBlock({
+        transactionBlock: tx as any,
+        options: {
+          showEffects: true,
+        }
       });
       onGameCreated(joinGameId.trim());
     } catch (error) {
@@ -66,19 +100,79 @@ export function GameLobby({ onGameCreated, onError }: GameLobbyProps) {
     }
   };
 
-  // Helper function to extract game ID from transaction effects
-  const extractGameIdFromEffects = (effects: any): string | null => {
+  // Helper function to extract game ID from events (most reliable)
+  const extractGameIdFromEvents = (events: any[] | null | undefined): string | null => {
     try {
-      // Look for created objects in the transaction effects
-      if (effects?.created) {
-        for (const created of effects.created) {
-          if (created.reference?.objectId) {
-            return created.reference.objectId;
+      if (!events || !Array.isArray(events)) return null;
+      
+      for (const event of events) {
+        console.log('Event:', event);
+        // Look for GameCreated event
+        if (event.type && event.type.includes('GameCreated')) {
+          if (event.parsedJson?.game_id) {
+            return event.parsedJson.game_id;
+          }
+        }
+        // Alternative structure
+        if (event.parsedJson && typeof event.parsedJson === 'object') {
+          if (event.parsedJson.game_id) {
+            return event.parsedJson.game_id;
           }
         }
       }
       return null;
-    } catch {
+    } catch (error) {
+      console.error('Error extracting game ID from events:', error);
+      return null;
+    }
+  };
+
+  // Helper function to extract game ID from transaction effects
+  const extractGameIdFromEffects = (effects: any): string | null => {
+    try {
+      console.log('Transaction effects:', JSON.stringify(effects, null, 2));
+      
+      // Look for created objects in the transaction effects
+      if (effects?.created) {
+        for (const created of effects.created) {
+          console.log('Created object:', created);
+          if (created.reference?.objectId) {
+            return created.reference.objectId;
+          }
+          // Try alternative structure
+          if (created.objectId) {
+            return created.objectId;
+          }
+        }
+      }
+      
+      // Try alternative structures for transaction effects
+      if (effects?.effects?.created) {
+        for (const created of effects.effects.created) {
+          console.log('Created object (nested):', created);
+          if (created.reference?.objectId) {
+            return created.reference.objectId;
+          }
+          if (created.objectId) {
+            return created.objectId;
+          }
+        }
+      }
+      
+      // Look for shared objects (Game is shared)
+      if (effects?.mutated) {
+        for (const mutated of effects.mutated) {
+          console.log('Mutated object:', mutated);
+          if (mutated.reference?.objectId) {
+            // This might be the Game object that was created and shared
+            return mutated.reference.objectId;
+          }
+        }
+      }
+      
+      return null;
+    } catch (error) {
+      console.error('Error extracting game ID:', error);
       return null;
     }
   };
@@ -139,9 +233,7 @@ interface GameWaitingRoomProps {
 }
 
 export function GameWaitingRoom({ gameState, myIndex, onError }: GameWaitingRoomProps) {
-  const currentAccount = useCurrentAccount();
-  const { mutateAsync: signAndExecuteTransaction } = useSignAndExecuteTransaction();
-  const account = currentAccount ? { address: currentAccount.address } : null;
+  const { account, signAndExecuteTransactionBlock } = useWallet();
   const [isStarting, setIsStarting] = useState(false);
 
   const isCreator = account?.address === gameState.creator;
@@ -162,8 +254,11 @@ export function GameWaitingRoom({ gameState, myIndex, onError }: GameWaitingRoom
 
       const tx = await startGame(gameState.id, coinId);
       
-      await signAndExecuteTransaction({
-        transaction: tx,
+      await signAndExecuteTransactionBlock({
+        transactionBlock: tx as any,
+        options: {
+          showEffects: true,
+        }
       });
       console.log('Game started successfully');
     } catch (error) {

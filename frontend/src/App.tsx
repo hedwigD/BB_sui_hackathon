@@ -1,14 +1,19 @@
 import React, { useState } from 'react';
-import { SuiProvider } from './providers/SuiProvider';
+import { 
+  WalletProvider, 
+  ConnectButton, 
+  useWallet,
+  SuietWallet,
+  EthosWallet
+} from '@suiet/wallet-kit';
+import '@suiet/wallet-kit/style.css';
 import { GameLobby, GameWaitingRoom } from './components/GameLobby';
 import { GameBoard } from './components/GameBoard';
 import { GameControls } from './components/GameControls';
 import { useGameState } from './hooks/useGameState';
-import { ConnectButton, useCurrentAccount } from '@mysten/dapp-kit';
 
 function GameApp() {
-  const currentAccount = useCurrentAccount();
-  const account = currentAccount ? { address: currentAccount.address } : null;
+  const { connected, account, disconnect } = useWallet();
   const [currentGameId, setCurrentGameId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -36,6 +41,7 @@ function GameApp() {
     setError(null);
   };
 
+
   // Effect to fetch move cap when game starts
   React.useEffect(() => {
     if (gameState && gameState.status === 1 && account?.address && !moveCap) {
@@ -50,7 +56,21 @@ function GameApp() {
       <header className="bg-white shadow-sm p-4">
         <div className="max-w-6xl mx-auto flex justify-between items-center">
           <h1 className="text-2xl font-bold text-gray-900">Sui Tile Game</h1>
-          <ConnectButton />
+          {!connected ? (
+            <ConnectButton />
+          ) : (
+            <div className="flex items-center gap-4">
+              <span className="text-sm text-gray-600">
+                {account?.address.slice(0, 8)}...{account?.address.slice(-6)}
+              </span>
+              <button
+                onClick={disconnect}
+                className="px-3 py-1 bg-gray-500 text-white rounded hover:bg-gray-600"
+              >
+                Disconnect
+              </button>
+            </div>
+          )}
         </div>
       </header>
 
@@ -61,7 +81,13 @@ function GameApp() {
           </div>
         )}
 
-        {!currentGameId ? (
+        {!connected ? (
+          <div className="text-center py-20">
+            <h2 className="text-3xl font-bold mb-4 text-gray-700">Welcome to Sui Tile Game</h2>
+            <p className="text-gray-600 mb-8">Connect your wallet to start playing</p>
+            <ConnectButton />
+          </div>
+        ) : !currentGameId ? (
           <GameLobby onGameCreated={handleGameCreated} onError={handleError} />
         ) : !gameState ? (
           <div className="text-center py-8">
@@ -161,9 +187,14 @@ function GameApp() {
 
 function App() {
   return (
-    <SuiProvider>
+    <WalletProvider 
+      defaultWallets={[
+        SuietWallet,
+        EthosWallet
+      ]}
+    >
       <GameApp />
-    </SuiProvider>
+    </WalletProvider>
   );
 }
 
