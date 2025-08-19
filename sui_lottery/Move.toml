@@ -1,12 +1,10 @@
 [package]
 name = "sui_lottery"
 version = "0.0.1"
-authors = ["hedwig"]
-
-[dependencies]
-# 최신 Sui 프레임워크를 가져옵니다. (필요시 rev를 testnet/mainnet에 맞게 고정하세요)
-Sui = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "main" }
+edition = "2024"
 
 [addresses]
-# 모듈 선언이 `module game::grid_hunt` 이므로, 주소 이름 `game`을 제공해야 함
-game = "0x0"
+move_logic = "0x0"
+
+[dependencies]
+Sui = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "framework/devnet" }
