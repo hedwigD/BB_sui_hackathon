@@ -2,23 +2,32 @@ module move_logic::tile_game_core;
 
 use sui::clock::{Self, Clock};
 use sui::event;
-use sui::coin;
+use sui::coin::{Self, Coin};
 use sui::sui::SUI;
+use sui::dynamic_object_field as dof;
+use sui::object::{Self, ID, UID};
+use sui::tx_context::{Self, TxContext};
+use sui::transfer;
+use sui::option::{Self, Option};
+use sui::vec_set::{Self, VecSet};
 
 // --------------------------------------------------
 // Constants / Errors
 // --------------------------------------------------
-const BOARD_SIZE: u8 = 10;                  // [CHANGED] 10x10
+const BOARD_SIZE: u8 = 10;                  // 10x10
 const MAX_TILES: u64 = 10;
 const TURN_TIMEOUT_MS: u64 = 3000;
 const DEFAULT_CAP_MOVES: u64 = 10000;
 const DIR_NONE: u8 = 255;
+const JOIN_FEE: u64 = 50000000;             // 0.05 SUI in MIST (10^9 MIST = 1 SUI)
+const TOTAL_POT: u64 = 100000000;           // 0.1 SUI in MIST
+const TILE_REWARD: u64 = 10000000;          // 0.01 SUI per tile in MIST
 
 // 상태코드: 0 Lobby, 1 Placement, 2 Playing, 3 Finished
-const STATUS_LOBBY: u8 = 0;                 // [CHANGED] 상태 정의 추가
-const STATUS_PLACEMENT: u8 = 1;             // [CHANGED]
-const STATUS_PLAYING: u8 = 2;               // [CHANGED]
-const STATUS_FINISHED: u8 = 3;              // [CHANGED]
+const STATUS_LOBBY: u8 = 0;
+const STATUS_PLACEMENT: u8 = 1;
+const STATUS_PLAYING: u8 = 2;
+const STATUS_FINISHED: u8 = 3;
 
 const E_INVALID_PLAYER: u64 = 2;
 const E_NOT_PLAYER_TURN: u64 = 3;
@@ -29,11 +38,13 @@ const E_WRONG_FUNDING_AMOUNT: u64 = 14;
 const E_TURN_TIMEOUT_NOT_REACHED: u64 = 20;
 const E_GAME_FULL: u64 = 21;
 const E_ALREADY_JOINED: u64 = 22;
-// const E_NOT_FOUND: u64 = 23;
-const E_BAD_COORD: u64 = 24;                // [CHANGED] 좌표 범위 오류
-const E_ALREADY_PLACED: u64 = 25;           // [CHANGED] 이미 시작 위치 선택함
-const E_NOT_PLACEMENT: u64 = 26;            // [CHANGED] Placement 단계 아님
-const E_NOT_BOTH_PLACED: u64 = 27;          // [CHANGED] 둘 다 선택 안 됨
+const E_BAD_COORD: u64 = 24;
+const E_ALREADY_PLACED: u64 = 25;
+const E_NOT_PLACEMENT: u64 = 26;
+const E_NOT_BOTH_PLACED: u64 = 27;
+const E_TILE_NOT_FOUND: u64 = 28;           // 추가: 타일 없음
+const E_ALREADY_CLAIMED: u64 = 29;          // 추가: 이미 캡처됨
+const E_INSUFFICIENT_POT: u64 = 30;         // 추가: pot 부족
 
 // --------------------------------------------------
 // Structs
@@ -44,9 +55,9 @@ public struct SuiTile has key, store {
     id: UID,
     game_id: ID,
     position: Coord,
-    value: u64,
+    reward: Option<Coin<SUI>>,              // 타일 보상 코인 (캡처 시 이전)
     claimed: bool,
-    owner: option::Option<address>,
+    owner: Option<address>,
 }
 
 public struct GameStatus has copy, drop, store { value: u8 } // 0 Lobby, 1 Placement, 2 Playing, 3 Finished
@@ -58,23 +69,25 @@ public struct Game has key {
     board_size: u8,
     players: vector<address>,          // length 0–2
     current_turn: u8,                  // 0 or 1 (Playing에서만 의미)
-    status: GameStatus,                // [CHANGED] 단계 확장
+    status: GameStatus,
     tiles_remaining: u64,
     turn_start_time: u64,
-    winner: option::Option<address>,
-    pot: coin::Coin<SUI>,
-    tile_ids: vector<ID>,
+    winner: Option<address>,
+    pot: Coin<SUI>,
     move_caps_created: bool,
 
     // 내부 상태
-    players_positions: vector<Coord>,  // [CHANGED] Placement에서 채움
+    players_positions: vector<Coord>,
     players_scores: vector<u64>,
     last_directions: vector<u8>,
     scores_cache: vector<u64>,
 
     // Placement 단계 상태
-    has_placed: vector<bool>,          // [CHANGED] 각 플레이어가 시작 위치를 선택했는지
-    starter_index: u8,                 // [CHANGED] 마지막에 선택한 사람(= 선공)
+    has_placed: vector<bool>,
+    starter_index: u8,
+
+    // 타일 관리 (dynamic object fields 키로 사용)
+    tile_positions: vector<Coord>,     // 모든 타일 좌표 목록 (조회용)
 }
 
 public struct GameRegistry has key {
@@ -94,7 +107,7 @@ public struct MoveCap has key, store {
 // --------------------------------------------------
 public struct GameCreated has copy, drop { game_id: ID, creator: address, board_size: u8 }
 public struct PlayerJoined has copy, drop { game_id: ID, player: address, player_index: u8 }
-public struct GameStarted has copy, drop { game_id: ID, players: vector<address>, starter_index: u8 }  // [CHANGED] starter_index 추가
+public struct GameStarted has copy, drop { game_id: ID, players: vector<address>, starter_index: u8 }
 
 public struct PlayerMoved has copy, drop {
     game_id: ID,
@@ -117,10 +130,9 @@ public struct PlayerAutoMoved has copy, drop {
 
 public struct TileCaptured has copy, drop {
     game_id: ID,
-    tile_id: ID,
+    position: Coord,
     player: address,
     player_index: u8,
-    position: Coord,
     value: u64,
     new_score: u64,
 }
@@ -129,16 +141,16 @@ public struct TurnChanged has copy, drop { game_id: ID, new_turn_player: address
 
 public struct GameFinished has copy, drop {
     game_id: ID,
-    winner: option::Option<address>,
+    winner: Option<address>,
     scores: vector<u64>,
 }
 
-public struct StartPlaced has copy, drop {                 // [CHANGED] 시작 위치 선택 이벤트
+public struct StartPlaced has copy, drop {
     game_id: ID,
     player: address,
     player_index: u8,
     position: Coord,
-    placed_count: u8, // 누적 몇 명 선택했는지
+    placed_count: u8,
 }
 
 // --------------------------------------------------
@@ -161,12 +173,11 @@ public entry fun create_game(registry: &mut GameRegistry, ctx: &mut TxContext): 
         board_size: BOARD_SIZE,
         players: vector::empty(),
         current_turn: 0,
-        status: GameStatus { value: STATUS_LOBBY },       // [CHANGED]
+        status: GameStatus { value: STATUS_LOBBY },
         tiles_remaining: MAX_TILES,
         turn_start_time: 0,
         winner: option::none<address>(),
         pot: coin::zero<SUI>(ctx),
-        tile_ids: vector::empty(),
         move_caps_created: false,
 
         // 빈 상태로 시작
@@ -175,8 +186,10 @@ public entry fun create_game(registry: &mut GameRegistry, ctx: &mut TxContext): 
         last_directions: vector::empty<u8>(),
         scores_cache: vector::empty<u64>(),
 
-        has_placed: vector::empty<bool>(),                // [CHANGED]
-        starter_index: 0,                                  // [CHANGED]
+        has_placed: vector::empty<bool>(),
+        starter_index: 0,
+
+        tile_positions: vector::empty<Coord>(),
     };
     vector::push_back(&mut registry.games, gid_inner);
     event::emit(GameCreated { game_id: gid_inner, creator: tx_context::sender(ctx), board_size: BOARD_SIZE });
@@ -184,13 +197,17 @@ public entry fun create_game(registry: &mut GameRegistry, ctx: &mut TxContext): 
     gid_inner
 }
 
-public entry fun join_game(game: &mut Game, ctx: &mut TxContext) {
+public entry fun join_game(game: &mut Game, fee: Coin<SUI>, ctx: &mut TxContext) {
     assert!(game.status.value == STATUS_LOBBY, E_GAME_NOT_ACTIVE);
+    assert!(coin::value(&fee) == JOIN_FEE, E_WRONG_FUNDING_AMOUNT);
     let sender = tx_context::sender(ctx);
     if (contains_address(&game.players, sender)) {
         abort E_ALREADY_JOINED
     };
     assert!(vector::length(&game.players) < 2, E_GAME_FULL);
+
+    // pot에 fee 추가
+    coin::join(&mut game.pot, fee);
 
     vector::push_back(&mut game.players, sender);
     let idx = (vector::length(&game.players) as u8) - 1;
@@ -216,14 +233,14 @@ public entry fun join_game(game: &mut Game, ctx: &mut TxContext) {
         vector::push_back(&mut game.scores_cache, 0);
         vector::push_back(&mut game.scores_cache, 0);
 
-        game.status.value = STATUS_PLACEMENT;            // [CHANGED]
+        game.status.value = STATUS_PLACEMENT;
     }
 }
 
 // --------------------------------------------------
-// Placement: choose starting cell (공개 보드 배치 전)
+// Placement: choose starting cell
 // --------------------------------------------------
-public entry fun choose_start(game: &mut Game, x: u8, y: u8, ctx: &mut TxContext) {  // [CHANGED] 새 함수
+public entry fun choose_start(game: &mut Game, x: u8, y: u8, ctx: &mut TxContext) {
     assert!(game.status.value == STATUS_PLACEMENT, E_NOT_PLACEMENT);
     assert!(x < game.board_size && y < game.board_size, E_BAD_COORD);
 
@@ -242,10 +259,6 @@ public entry fun choose_start(game: &mut Game, x: u8, y: u8, ctx: &mut TxContext
     // 마지막 선택자 = 선공
     game.starter_index = idx as u8;
 
-    let _placed_count: u8 = (vector::length(&game.players) as u8)  // 두 명이라고 가정
-        - (if (*vector::borrow(&game.has_placed, 0)) { 0 } else { 1 })
-        - (if (*vector::borrow(&game.has_placed, 1)) { 0 } else { 1 });
-    // placed_count 계산을 간단하게 다시:
     let mut count: u8 = 0;
     if (*vector::borrow(&game.has_placed, 0)) { count = count + 1; };
     if (*vector::borrow(&game.has_placed, 1)) { count = count + 1; };
@@ -260,11 +273,10 @@ public entry fun choose_start(game: &mut Game, x: u8, y: u8, ctx: &mut TxContext
 }
 
 // --------------------------------------------------
-// Start Game (보드 공개 + 선공 확정)
+// Start Game
 // --------------------------------------------------
 public entry fun start_game(
     game: &mut Game,
-    tile_funding: coin::Coin<SUI>,
     clock: &Clock,
     ctx: &mut TxContext
 ) {
@@ -276,11 +288,10 @@ public entry fun start_game(
     assert!(*vector::borrow(&game.has_placed, 0), E_NOT_BOTH_PLACED);
     assert!(*vector::borrow(&game.has_placed, 1), E_NOT_BOTH_PLACED);
 
-    // 타일 펀딩: 총액 = MAX_TILES
-    assert!(coin::value(&tile_funding) == MAX_TILES, E_WRONG_FUNDING_AMOUNT);
-    coin::join(&mut game.pot, tile_funding);
+    // pot 총액 확인: 0.1 SUI
+    assert!(coin::value(&game.pot) == TOTAL_POT, E_WRONG_FUNDING_AMOUNT);
 
-    // 여기서 타일 생성(공개 보드)
+    // 타일 생성 (pot을 10개로 쪼개서 각 타일에 배정)
     create_tiles(game, ctx);
 
     // MoveCap 생성 및 전송
@@ -369,12 +380,12 @@ public entry fun move_with_cap(
 }
 
 // --------------------------------------------------
-// Forced timeout move (anyone can call)
+// Forced timeout move
 // --------------------------------------------------
 public entry fun force_timeout_move(
     game: &mut Game,
     clock: &Clock,
-    _ctx: &mut TxContext
+    ctx: &mut TxContext
 ) {
     assert!(game.status.value == STATUS_PLAYING, E_GAME_NOT_ACTIVE);
     let now = clock::timestamp_ms(clock);
@@ -398,7 +409,7 @@ public entry fun force_timeout_move(
         direction: dir,
     });
 
-    capture_if_tile(game, cur_idx, _ctx);
+    capture_if_tile(game, cur_idx, ctx);
     rotate_turn(game, now);
 }
 
@@ -406,20 +417,39 @@ public entry fun force_timeout_move(
 // Tile generation / capture
 // --------------------------------------------------
 fun create_tiles(game: &mut Game, ctx: &mut TxContext) {
+    let mut placed_positions = vec_set::empty<Coord>();
     let mut i = 0;
     while (i < MAX_TILES) {
-        let pos = pseudo_position(i, game.board_size);
+        // pot에서 TILE_REWARD만큼 split
+        assert!(coin::value(&game.pot) >= TILE_REWARD, E_INSUFFICIENT_POT);
+        let reward_coin = coin::split(&mut game.pot, TILE_REWARD, ctx);
+
+        // 중복되지 않는 위치 생성
+        let mut pos: Coord;
+        loop {
+            pos = pseudo_position(i, game.board_size);
+            if (!vec_set::contains(&placed_positions, &pos)) {
+                break
+            };
+            i = i + 1; // 시드 변경을 위해 i 증가 (간단한 방법)
+        };
+        vec_set::insert(&mut placed_positions, pos);
+
         let tile = SuiTile {
             id: object::new(ctx),
             game_id: object::uid_to_inner(&game.id),
             position: pos,
-            value: 1,
+            reward: option::some(reward_coin),
             claimed: false,
             owner: option::none<address>(),
         };
-        let tid = object::uid_to_inner(&tile.id);
-        vector::push_back(&mut game.tile_ids, tid);
-        transfer::share_object(tile);
+
+        // Game의 dynamic object field에 추가 (키: Coord, 값: SuiTile)
+        dof::add(&mut game.id, pos, tile);
+
+        // 조회용 position 목록 추가
+        vector::push_back(&mut game.tile_positions, pos);
+
         i = i + 1;
     };
 }
@@ -428,43 +458,49 @@ fun capture_if_tile(game: &mut Game, player_uindex: u64, ctx: &mut TxContext) {
     if (game.tiles_remaining == 0) return;
     let pos = *vector::borrow(&game.players_positions, player_uindex);
 
-    // 데모용 간단화: 실제로는 타일 객체 위치 비교 및 claimed 갱신을 해야 함.
-    // 여기서는 1개 캡처 처리 후 break.
-    let len = vector::length(&game.tile_ids);
-    let i = 0;
-    while (i < len) {
-        let tid = *vector::borrow(&game.tile_ids, i);
+    // 위치에 타일이 존재하는지 확인
+    if (!dof::exists_<Coord>(&game.id, pos)) {
+        return; // 타일 없음, 무시
+    };
 
-        let paddr = *vector::borrow(&game.players, player_uindex);
+    // 타일 mutable borrow
+    let tile = dof::borrow_mut<Coord, SuiTile>(&mut game.id, pos);
+    assert!(!tile.claimed, E_ALREADY_CLAIMED);
 
-        // 점수 +1
-        let cur = *vector::borrow(&game.players_scores, player_uindex);
-        let tile_value = 1u64;
-        let new_score = cur + tile_value;
-        *vector::borrow_mut(&mut game.players_scores, player_uindex) = new_score;
-        *vector::borrow_mut(&mut game.scores_cache, player_uindex) = new_score;
+    let paddr = *vector::borrow(&game.players, player_uindex);
 
-        game.tiles_remaining = game.tiles_remaining - 1;
+    // reward 추출 및 이전
+    let reward_opt = &mut tile.reward;
+    assert!(option::is_some(reward_opt), E_TILE_NOT_FOUND);
+    let reward = option::extract(reward_opt);
+    let tile_value = coin::value(&reward);
 
-        if (coin::value(&game.pot) >= tile_value) {
-            let reward = coin::split(&mut game.pot, tile_value, ctx);
-            transfer::public_transfer(reward, paddr);
-        };
+    // 점수 업데이트
+    let cur = *vector::borrow(&game.players_scores, player_uindex);
+    let new_score = cur + tile_value;
+    *vector::borrow_mut(&mut game.players_scores, player_uindex) = new_score;
+    *vector::borrow_mut(&mut game.scores_cache, player_uindex) = new_score;
 
-        event::emit(TileCaptured {
-            game_id: object::uid_to_inner(&game.id),
-            tile_id: tid,
-            player: paddr,
-            player_index: player_uindex as u8,
-            position: pos,
-            value: tile_value,
-            new_score,
-        });
+    // 타일 상태 업데이트
+    tile.claimed = true;
+    tile.owner = option::some(paddr);
 
-        if (game.tiles_remaining == 0) {
-            finish_game(game);
-        };
-        break
+    // 보상 코인 소유권 이전
+    transfer::public_transfer(reward, paddr);
+
+    game.tiles_remaining = game.tiles_remaining - 1;
+
+    event::emit(TileCaptured {
+        game_id: object::uid_to_inner(&game.id),
+        position: pos,
+        player: paddr,
+        player_index: player_uindex as u8,
+        value: tile_value,
+        new_score,
+    });
+
+    if (game.tiles_remaining == 0) {
+        finish_game(game);
     };
 }
 
@@ -543,7 +579,6 @@ fun contains_address(addrs: &vector<address>, target: address): bool {
     false
 }
 
-// Linear search (only 2 players -> trivial cost)
 fun player_index(addrs: &vector<address>, a: address): u64 {
     let len = vector::length(addrs);
     let mut i = 0;
@@ -557,7 +592,29 @@ fun player_index(addrs: &vector<address>, a: address): u64 {
 }
 
 // --------------------------------------------------
-// Getters
+// Real-time status query functions (실시간 상태 조회 함수)
+// --------------------------------------------------
+// 모든 타일 위치 목록 반환 (클라이언트가 각 위치로 세부 정보 조회 가능)
+public fun get_tile_positions(game: &Game): vector<Coord> {
+    game.tile_positions
+}
+
+// 특정 위치의 타일 정보 조회 (position, claimed, owner, reward value if not claimed)
+public fun get_tile_info(game: &Game, pos: Coord): (Coord, u64, bool, Option<address>) {
+    if (!dof::exists_<Coord>(&game.id, pos)) {
+        abort E_TILE_NOT_FOUND
+    };
+    let tile = dof::borrow<Coord, SuiTile>(&game.id, pos);
+    let reward_value = if (option::is_some(&tile.reward)) {
+        coin::value(option::borrow(&tile.reward))
+    } else {
+        0
+    };
+    (tile.position, reward_value, tile.claimed, tile.owner)
+}
+
+// --------------------------------------------------
+// Getters (기존)
 // --------------------------------------------------
 public fun get_status(game: &Game): u8 { game.status.value }
 public fun get_current_turn(game: &Game): u8 { game.current_turn }
@@ -567,7 +624,7 @@ public fun get_players(game: &Game): vector<address> { game.players }
 public fun get_positions(game: &Game): vector<Coord> { game.players_positions }
 public fun get_scores(game: &Game): vector<u64> { game.players_scores }
 public fun get_last_directions(game: &Game): vector<u8> { game.last_directions }
-public fun get_winner(game: &Game): option::Option<address> { game.winner }
+public fun get_winner(game: &Game): Option<address> { game.winner }
 
 // --------------------------------------------------
 // Test-only
