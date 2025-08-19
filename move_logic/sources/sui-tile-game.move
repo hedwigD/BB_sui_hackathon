@@ -1,4 +1,3 @@
-```move
 module move_logic::tile_game_core;
 
 use sui::clock::{Self, Clock};
@@ -427,8 +426,10 @@ fun create_tiles(game: &mut Game, ctx: &mut TxContext) {
 
         // 중복되지 않는 위치 생성
         let mut pos: Coord;
+
         loop {
-            pos = pseudo_position(i, game.board_size);
+            let now = clock::timestamp_ms(clock); 
+            pos = pseudo_position(now, game.board_size);
             if (!vec_set::contains(&placed_positions, &pos)) {
                 break
             };
@@ -635,4 +636,3 @@ public fun init_for_testing(ctx: &mut TxContext) {
     let reg = GameRegistry { id: object::new(ctx), games: vector::empty() };
     transfer::share_object(reg);
 }
-```
