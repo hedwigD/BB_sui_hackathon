@@ -49,7 +49,26 @@ export function useGameState(gameId: string | null) {
       
       if (gameObject.data?.content) {
         const parsed = parseGameContent(gameObject.data.content);
-        setGameState(parsed);
+        if (parsed) {
+          // Convert ParsedGame to GameState format
+          const gameState: GameState = {
+            id: parsed.id,
+            creator: parsed.creator,
+            boardSize: parsed.boardSize,
+            players: parsed.players,
+            currentTurn: parsed.currentTurn,
+            status: parsed.status,
+            tilesRemaining: parsed.tilesRemaining,
+            turnStartTime: parsed.turnStartTime ? parseInt(parsed.turnStartTime) : Date.now(),
+            winner: parsed.winner,
+            playersPositions: parsed.playersPositions,
+            playersScores: parsed.playersScores,
+            lastDirections: parsed.lastDirections,
+            tileIds: parsed.tileIds,
+            moveCapCreated: parsed.moveCapCreated,
+          };
+          setGameState(gameState);
+        }
       }
     } catch (err) {
       setError(`Failed to fetch game: ${err}`);

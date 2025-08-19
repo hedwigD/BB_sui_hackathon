@@ -1,8 +1,17 @@
 import React, { useState } from 'react';
 import { useWallet } from '@suiet/wallet-kit';
-import { GameState, MAX_TILES } from '../types/game';
-import { createGame, joinGame, startGame, findSuiCoin } from '../utils/sui';
-import { REGISTRY_ID } from '../utils/sui';
+import {
+  createGame,
+  joinGame,
+  startGame,
+  findSuiCoin,
+  REGISTRY_ID,
+  extractGameIdFromEvents,
+  extractGameIdFromObjectChanges,
+  extractGameIdFromEffects,
+  fetchFullTransaction,
+} from '../utils/sui';
+import { GameState } from '../types/game';
 
 interface GameLobbyProps {
   onGameCreated: (gameId: string) => void;
@@ -20,57 +29,44 @@ export function GameLobby({ onGameCreated, onError }: GameLobbyProps) {
       onError('Please connect your wallet first');
       return;
     }
-
     try {
       setIsCreating(true);
-      const tx = await createGame(REGISTRY_ID);
-      
-      const result = await signAndExecuteTransactionBlock({
+      const tx = createGame(REGISTRY_ID);
+
+      // 1) 지갑으로 전송/서명
+      const execResult = await signAndExecuteTransactionBlock({
         transactionBlock: tx as any,
         options: {
+          // 일부 지갑이 무시 가능
           showEffects: true,
           showEvents: true,
-        }
+          showObjectChanges: true,
+        },
+        requestType: 'WaitForLocalExecution',
       });
-      
-      console.log('=== TRANSACTION RESULT ===');
-      console.log('Result keys:', Object.keys(result));
-      console.log('Events:', result.events);
-      console.log('Effects:', result.effects);
-      console.log('Full result:', result);
-      
-      // Try to extract game ID from events first (most reliable)
-      let gameId = extractGameIdFromEvents(result.events);
-      
-      // Fallback to effects
+
+      console.log('[Wallet raw response]', execResult);
+
+      // 2) digest 로 풀데이터 다시 조회
+      const full = await fetchFullTransaction(execResult.digest);
+      console.log('[Full txn]', full);
+
+      // 3) gameId 추출 (우선순위: events -> objectChanges -> effects)
+      let gameId =
+        extractGameIdFromEvents(full.events) ||
+        extractGameIdFromObjectChanges(full.objectChanges as any) ||
+        extractGameIdFromEffects(full.effects);
+
       if (!gameId) {
-        gameId = extractGameIdFromEffects(result.effects);
-      }
-      
-      // Last resort: look for any object ID in the result
-      if (!gameId && result.effects?.created && result.effects.created.length > 0) {
-        // Get the first created object (should be the Game)
-        const firstCreated = result.effects.created[0];
-        console.log('First created object:', firstCreated);
-        if (firstCreated.reference?.objectId) {
-          gameId = firstCreated.reference.objectId;
-        } else if ((firstCreated as any).objectId) {
-          gameId = (firstCreated as any).objectId;
-        }
-      }
-      
-      console.log('Extracted game ID:', gameId);
-      
-      if (gameId) {
-        onGameCreated(gameId);
-      } else {
-        console.error('Could not find game ID in any of these locations:');
-        console.error('- Events:', result.events);
-        console.error('- Effects:', result.effects);
+        console.error('Failed to extract gameId. Full response:', JSON.stringify(full, null, 2));
         onError('Failed to extract game ID from transaction');
+        return;
       }
-    } catch (error) {
-      onError(`Failed to create game: ${error}`);
+
+      onGameCreated(gameId);
+    } catch (e: any) {
+      console.error(e);
+      onError(`Failed to create game: ${e.message || e}`);
     } finally {
       setIsCreating(false);
     }
@@ -81,99 +77,20 @@ export function GameLobby({ onGameCreated, onError }: GameLobbyProps) {
       onError('Please connect wallet and enter game ID');
       return;
     }
-
     try {
       setIsJoining(true);
-      const tx = await joinGame(joinGameId.trim());
-      
+      const tx = joinGame(joinGameId.trim());
       await signAndExecuteTransactionBlock({
         transactionBlock: tx as any,
         options: {
           showEffects: true,
-        }
+        },
       });
       onGameCreated(joinGameId.trim());
-    } catch (error) {
-      onError(`Failed to join game: ${error}`);
+    } catch (e: any) {
+      onError(`Failed to join game: ${e.message || e}`);
     } finally {
       setIsJoining(false);
-    }
-  };
-
-  // Helper function to extract game ID from events (most reliable)
-  const extractGameIdFromEvents = (events: any[] | null | undefined): string | null => {
-    try {
-      if (!events || !Array.isArray(events)) return null;
-      
-      for (const event of events) {
-        console.log('Event:', event);
-        // Look for GameCreated event
-        if (event.type && event.type.includes('GameCreated')) {
-          if (event.parsedJson?.game_id) {
-            return event.parsedJson.game_id;
-          }
-        }
-        // Alternative structure
-        if (event.parsedJson && typeof event.parsedJson === 'object') {
-          if (event.parsedJson.game_id) {
-            return event.parsedJson.game_id;
-          }
-        }
-      }
-      return null;
-    } catch (error) {
-      console.error('Error extracting game ID from events:', error);
-      return null;
-    }
-  };
-
-  // Helper function to extract game ID from transaction effects
-  const extractGameIdFromEffects = (effects: any): string | null => {
-    try {
-      console.log('Transaction effects:', JSON.stringify(effects, null, 2));
-      
-      // Look for created objects in the transaction effects
-      if (effects?.created) {
-        for (const created of effects.created) {
-          console.log('Created object:', created);
-          if (created.reference?.objectId) {
-            return created.reference.objectId;
-          }
-          // Try alternative structure
-          if (created.objectId) {
-            return created.objectId;
-          }
-        }
-      }
-      
-      // Try alternative structures for transaction effects
-      if (effects?.effects?.created) {
-        for (const created of effects.effects.created) {
-          console.log('Created object (nested):', created);
-          if (created.reference?.objectId) {
-            return created.reference.objectId;
-          }
-          if (created.objectId) {
-            return created.objectId;
-          }
-        }
-      }
-      
-      // Look for shared objects (Game is shared)
-      if (effects?.mutated) {
-        for (const mutated of effects.mutated) {
-          console.log('Mutated object:', mutated);
-          if (mutated.reference?.objectId) {
-            // This might be the Game object that was created and shared
-            return mutated.reference.objectId;
-          }
-        }
-      }
-      
-      return null;
-    } catch (error) {
-      console.error('Error extracting game ID:', error);
-      return null;
     }
   };
 
@@ -189,7 +106,6 @@ export function GameLobby({ onGameCreated, onError }: GameLobbyProps) {
   return (
     <div className="max-w-md mx-auto p-6 bg-white rounded-lg shadow-md space-y-6">
       <h2 className="text-2xl font-bold text-center">Game Lobby</h2>
-      
       <div className="space-y-4">
         <div>
           <h3 className="text-lg font-semibold mb-2">Create New Game</h3>
@@ -201,7 +117,6 @@ export function GameLobby({ onGameCreated, onError }: GameLobbyProps) {
             {isCreating ? 'Creating...' : 'Create Game'}
           </button>
         </div>
-
         <div className="border-t pt-4">
           <h3 className="text-lg font-semibold mb-2">Join Existing Game</h3>
           <div className="space-y-2">
@@ -245,14 +160,16 @@ export function GameWaitingRoom({ gameState, myIndex, onError }: GameWaitingRoom
     try {
       setIsStarting(true);
       
-      // Find a coin with 10 SUI
-      const coinId = await findSuiCoin(account.address, BigInt(MAX_TILES * 1_000_000_000)); // 10 SUI in MIST
+      // Find a coin with sufficient balance for splitting
+      console.log('Finding coin for funding');
+      const coinId = await findSuiCoin(account.address, BigInt(500_000_000));
       if (!coinId) {
-        onError('You need at least 10 SUI to start the game');
+        onError('You need at least 0.5 SUI to start the game');
         return;
       }
 
-      const tx = await startGame(gameState.id, coinId);
+      console.log('Starting game with coin:', coinId);
+      const tx = startGame(gameState.id, coinId);
       
       await signAndExecuteTransactionBlock({
         transactionBlock: tx as any,
@@ -309,7 +226,7 @@ export function GameWaitingRoom({ gameState, myIndex, onError }: GameWaitingRoom
             disabled={isStarting}
             className="w-full px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 disabled:bg-gray-400 transition-colors"
           >
-            {isStarting ? 'Starting...' : `Start Game (${MAX_TILES} SUI required)`}
+            {isStarting ? 'Starting...' : 'Start Game (0.5 SUI required)'}
           </button>
         )}
 

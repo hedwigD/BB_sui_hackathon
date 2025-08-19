@@ -1,98 +1,101 @@
 import { SuiClient } from '@mysten/sui.js/client';
 import { TransactionBlock } from '@mysten/sui.js/transactions';
 
-
-// Configuration
+// 네트워크 / 클라이언트 설정
 export const NETWORK = 'testnet';
 export const SUI_CLIENT = new SuiClient({ url: `https://fullnode.${NETWORK}.sui.io:443` });
 
-// Contract configuration - Updated with deployed contract details
-export const PACKAGE_ID = '0x2e5b7573c70d371547138f89e09983369a4e2fec29ec60c0ace0c6f6f83aabca'; // Deployed package
-export const REGISTRY_ID = '0x035ceb3c222813a6c25b851e61733b5ff0e9fff8525fe64bad1d02f03f0adb71'; // Shared GameRegistry
-export const CLOCK_ID = '0x6'; // Sui system clock
-export const BOARD_SIZE = 11; // Game board size
+// 패키지/오브젝트 상수
+export const PACKAGE_ID = '0x7f40ebb607eb4109ab7f5181e8d8bcd315a6ef7bf9c59f2aa29f11801a30a67d';
+export const REGISTRY_ID = '0x5203e641d92407310a2df803f2412736d0a804fbdb6689886444f3b10d15b402';
+export const CLOCK_ID = '0x6';
+export const BOARD_SIZE = 11;
 
-export async function createGame(registryId: string) {
+// --------------------------------------------------
+// 트랜잭션 빌더
+// --------------------------------------------------
+export function createGame(registryId: string) {
   const tx = new TransactionBlock();
-  
   tx.moveCall({
     target: `${PACKAGE_ID}::tile_game_core::create_game`,
-    arguments: [
-      tx.object(registryId),
-    ],
+    arguments: [tx.object(registryId)],
   });
-  
   return tx;
 }
 
-export async function joinGame(gameId: string) {
+export function joinGame(gameId: string) {
   const tx = new TransactionBlock();
-  
   tx.moveCall({
     target: `${PACKAGE_ID}::tile_game_core::join_game`,
-    arguments: [
-      tx.object(gameId),
-    ],
+    arguments: [tx.object(gameId)],
   });
-  
   return tx;
 }
 
-export async function startGame(gameId: string, fundingCoinId: string) {
+export function startGame(gameId: string, coinId: string) {
   const tx = new TransactionBlock();
+  
+  // Split exactly 0.5 SUI (500_000_000 MIST) from the specified coin
+  const [splitCoin] = tx.splitCoins(tx.object(coinId), [tx.pure.u64(500_000_000)]);
   
   tx.moveCall({
     target: `${PACKAGE_ID}::tile_game_core::start_game`,
     arguments: [
       tx.object(gameId),
-      tx.object(fundingCoinId), // funding coin
-      tx.object(CLOCK_ID), // clock
+      splitCoin,
+      tx.object(CLOCK_ID),
     ],
   });
-  
   return tx;
 }
 
-export async function moveWithCap(
+export function moveWithCap(
   gameId: string,
   moveCapId: string,
   direction: number
 ) {
   const tx = new TransactionBlock();
-  
   tx.moveCall({
     target: `${PACKAGE_ID}::tile_game_core::move_with_cap`,
     arguments: [
       tx.object(gameId),
-      tx.object(moveCapId), // move cap
-      tx.pure.u8(direction), // direction
-      tx.object(CLOCK_ID), // clock
+      tx.object(moveCapId),
+      tx.pure.u8(direction),
+      tx.object(CLOCK_ID),
     ],
   });
-  
   return tx;
 }
 
-export async function forceTimeoutMove(gameId: string) {
+export function forceTimeoutMove(gameId: string) {
   const tx = new TransactionBlock();
-  
   tx.moveCall({
     target: `${PACKAGE_ID}::tile_game_core::force_timeout_move`,
     arguments: [
       tx.object(gameId),
-      tx.object(CLOCK_ID), // clock
+      tx.object(CLOCK_ID),
     ],
   });
-  
   return tx;
 }
 
-// This function is not needed when using Suiet wallet kit
-// The wallet kit handles transaction signing automatically
-export async function signAndExecuteTransactionBlock(tx: TransactionBlock, signerAddress: string, walletType?: string) {
-  throw new Error('Use Suiet wallet kit signAndExecuteTransactionBlock instead');
+// --------------------------------------------------
+// 코인 검색
+// --------------------------------------------------
+export async function findSuiCoin(address: string, amount: bigint) {
+  const coins = await SUI_CLIENT.getCoins({
+    owner: address,
+    coinType: '0x2::sui::SUI',
+  });
+
+  const suitable = coins.data.filter(c => BigInt(c.balance) >= amount);
+  if (suitable.length > 0) return suitable[0].coinObjectId;
+  return coins.data[0]?.coinObjectId || null;
 }
 
+// --------------------------------------------------
+// 오브젝트 fetch
+// --------------------------------------------------
 export async function fetchGame(gameId: string) {
   return SUI_CLIENT.getObject({
     id: gameId,
@@ -107,57 +110,242 @@ export async function fetchMoveCap(moveCapId: string) {
   });
 }
 
-export async function findSuiCoin(address: string, amount: bigint) {
-  const coins = await SUI_CLIENT.getCoins({
-    owner: address,
-    coinType: '0x2::sui::SUI',
-  });
-  
-  // Find a coin with sufficient balance or create one by merging
-  const suitableCoins = coins.data.filter(coin => 
-    BigInt(coin.balance) >= amount
-  );
-  
-  if (suitableCoins.length > 0) {
-    return suitableCoins[0].coinObjectId;
+// --------------------------------------------------
+// 파싱 유틸
+// --------------------------------------------------
+// 방어적 BigInt/number 변환
+function safeBigInt(v: any): string | null {
+  try {
+    if (v === null || v === undefined) return null;
+    return BigInt(v).toString();
+  } catch {
+    return null;
   }
-  
-  // If no single coin has enough, we'd need to merge coins
-  // For simplicity, return the first coin and let the user handle merging
-  return coins.data[0]?.coinObjectId || null;
 }
 
-export function parseGameContent(content: any): any {
-  if (!content || !content.fields) return null;
-  
+function safeVec<T>(v: any): T[] {
+  if (Array.isArray(v)) return v;
+  if (v && Array.isArray(v.fields)) return v.fields; // Sui 내부 vec 포맷 방어
+  return [];
+}
+
+export interface ParsedPlayerPosition {
+  x: number;
+  y: number;
+}
+
+export interface ParsedGame {
+  id: string;
+  creator: string;
+  boardSize: number;
+  players: string[];
+  currentTurn: number;
+  status: number;
+  tilesRemaining: number;
+  turnStartTime?: string | null;
+  winner: string | null;
+  playersPositions: ParsedPlayerPosition[];
+  playersScores: number[];
+  lastDirections: number[];
+  tileIds: string[];
+  moveCapCreated: boolean;
+}
+
+export function parseGameContent(content: any): ParsedGame | null {
+  if (!content || content.dataType !== 'moveObject' || !content.fields) return null;
+  const f = content.fields;
+  // status 구조체가 enum(Option-like) 형태일 때 value 추출
+  const statusVal =
+    f.status?.fields?.value ??
+    f.status?.value ??
+    f.status ??
+    0;
+
+  // winner 가 Option 구조: { fields: { vec: [] }} 또는 vec[0]
+  let winner: string | null = null;
+  if (f.winner) {
+    const vec = f.winner?.fields?.vec;
+    if (Array.isArray(vec) && vec.length > 0) winner = vec[0];
+  }
+
+  const playersArr: string[] = safeVec<string>(f.players);
+  const lastDirs: number[] = safeVec<number>(f.last_directions);
+  const scores: number[] = safeVec<number>(f.players_scores);
+  const tileIds: string[] = safeVec<string>(f.tile_ids);
+
+  const posRaw = safeVec<any>(f.players_positions);
+  const playersPositions: ParsedPlayerPosition[] = posRaw.map((p: any) => ({
+    x: Number(p.fields?.x ?? 0),
+    y: Number(p.fields?.y ?? 0),
+  }));
+
   return {
-    id: content.fields.id?.id,
-    creator: content.fields.creator,
-    boardSize: content.fields.board_size,
-    players: content.fields.players || [],
-    currentTurn: content.fields.current_turn,
-    status: content.fields.status?.fields?.value,
-    tilesRemaining: content.fields.tiles_remaining,
-    turnStartTime: content.fields.turn_start_time,
-    winner: content.fields.winner?.fields?.vec?.[0] || null,
-    playersPositions: content.fields.players_positions?.map((pos: any) => ({
-      x: pos.fields.x,
-      y: pos.fields.y
-    })) || [],
-    playersScores: content.fields.players_scores || [],
-    lastDirections: content.fields.last_directions || [],
-    tileIds: content.fields.tile_ids || [],
-    moveCapCreated: content.fields.move_caps_created || false,
+    id: f.id?.id || f.id,
+    creator: f.creator,
+    boardSize: Number(f.board_size ?? f.boardSize ?? 0),
+    players: playersArr,
+    currentTurn: Number(f.current_turn ?? 0),
+    status: Number(statusVal),
+    tilesRemaining: Number(f.tiles_remaining ?? 0),
+    turnStartTime: safeBigInt(f.turn_start_time),
+    winner,
+    playersPositions,
+    playersScores: scores.map(Number),
+    lastDirections: lastDirs.map(Number),
+    tileIds,
+    moveCapCreated: Boolean(f.move_caps_created),
   };
 }
 
 export function parseMoveCapContent(content: any): any {
   if (!content || !content.fields) return null;
-  
+  const f = content.fields;
   return {
-    id: content.fields.id?.id,
-    gameId: content.fields.game_id,
-    playerAddress: content.fields.player_address,
-    movesRemaining: content.fields.moves_remaining,
+    id: f.id?.id,
+    gameId: f.game_id,
+    playerAddress: f.player_address,
+    movesRemaining: f.moves_remaining,
+  };
+}
+
+// GameState-like 객체로 단순화 (필요하면 실제 GameState 타입과 매칭해서 사용)
+export function toGameStateLike(parsed: ParsedGame) {
+  return {
+    id: parsed.id,
+    creator: parsed.creator,
+    players: parsed.players,
+    status: parsed.status,
+    boardSize: parsed.boardSize,
+    currentTurn: parsed.currentTurn,
+    tilesRemaining: parsed.tilesRemaining,
+    winner: parsed.winner,
+    playersPositions: parsed.playersPositions,
+    playersScores: parsed.playersScores,
+    lastDirections: parsed.lastDirections,
+    tileIds: parsed.tileIds,
+    moveCapCreated: parsed.moveCapCreated,
+  };
+}
+
+// --------------------------------------------------
+// Game ID 추출 유틸
+// --------------------------------------------------
+export function extractGameIdFromEvents(events: any[] | null | undefined): string | null {
+  if (!Array.isArray(events)) return null;
+  for (const ev of events) {
+    const t = ev.type as string | undefined;
+    if (!t) continue;
+    // 가능한 이벤트 네이밍 패턴들
+    if (
+      t.includes('GameCreatedEvent') ||
+      t.includes('GameCreated') ||
+      t.endsWith('::GameCreated') ||
+      t.endsWith('::GameCreatedEvent')
+    ) {
+      const pj = ev.parsedJson;
+      if (pj?.game_id) return pj.game_id;
+      if (pj?.gameId) return pj.gameId;
+      if (pj?.id) return pj.id;
+    }
+    if (ev.parsedJson?.game_id) return ev.parsedJson.game_id;
+  }
+  return null;
+}
+
+export function extractGameIdFromObjectChanges(objectChanges: any[] | undefined): string | null {
+  if (!Array.isArray(objectChanges)) return null;
+  for (const ch of objectChanges) {
+    if (
+      ch.type === 'created' &&
+      typeof ch.objectType === 'string' &&
+      ch.objectType.includes('::tile_game_core::Game')
+    ) {
+      return ch.objectId;
+    }
+  }
+  return null;
+}
+
+export function extractGameIdFromEffects(effects: any): string | null {
+  if (!effects) return null;
+  if (Array.isArray(effects.created)) {
+    for (const c of effects.created) {
+      const id =
+        c.reference?.objectId ||
+        c.reference?.object_id ||
+        c.objectId;
+      if (id) return id;
+    }
+  }
+  if (Array.isArray(effects.mutated)) {
+    for (const m of effects.mutated) {
+      const id =
+        m.reference?.objectId ||
+        m.reference?.object_id ||
+        m.objectId;
+      if (id) return id;
+    }
+  }
+  return null;
+}
+
+// --------------------------------------------------
+// 트랜잭션 전체 조회 (digest 재조회)
+// --------------------------------------------------
+export async function fetchFullTransaction(digest: string) {
+  return SUI_CLIENT.waitForTransactionBlock({
+    digest,
+    options: {
+      showEvents: true,
+      showEffects: true,
+      showObjectChanges: true,
+      showBalanceChanges: false,
+      showInput: false,
+    },
+  });
+}
+
+// --------------------------------------------------
+// 편의 함수: 게임 한 번에 가져와 파싱
+// --------------------------------------------------
+export async function getParsedGame(gameId: string): Promise<ParsedGame | null> {
+  const obj = await fetchGame(gameId);
+  const content = obj?.data?.content;
+  return parseGameContent(content);
+}
+
+// --------------------------------------------------
+// 폴링 유틸: 2초 단위 새로고침 (start 버튼 자동 노출용)
+// --------------------------------------------------
+export function pollGame(
+  gameId: string,
+  onUpdate: (parsed: ParsedGame) => void,
+  intervalMs = 2000,
+  options?: { immediate?: boolean }
+): () => void {
+  let stopped = false;
+
+  const run = async () => {
+    try {
+      const parsed = await getParsedGame(gameId);
+      if (parsed && !stopped) {
+        onUpdate(parsed);
+      }
+    } catch (e) {
+      // 콘솔 정도만 (UI 에러는 컴포넌트에서 처리)
+      console.warn('[pollGame] fetch failed', e);
+    }
+  };
+
+  if (options?.immediate !== false) {
+    // 기본: 즉시 1회 실행
+    void run();
+  }
+
+  const handle = setInterval(run, intervalMs);
+
+  return () => {
+    stopped = true;
+    clearInterval(handle);
   };
 }
