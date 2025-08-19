@@ -5,8 +5,8 @@ use sui::event;
 use sui::coin::{Self, Coin};
 use sui::sui::SUI;
 use sui::dynamic_object_field as dof;
-use sui::object::{Self, ID, UID};
-use sui::tx_context::{Self, TxContext};
+use sui::object::{ID, UID};
+use sui::tx_context::TxContext;
 use sui::transfer;
 use std::option::{Self as option, Option};
 use sui::vec_set::{Self as vec_set, VecSet};
@@ -456,17 +456,17 @@ fun create_tiles(game: &mut Game, clock: &Clock, ctx: &mut TxContext) {
     };
 }
 
-fun capture_if_tile(game: &mut Game, player_uindex: u64, ctx: &mut TxContext) {
+fun capture_if_tile(game: &mut Game, player_uindex: u64, _ctx: &mut TxContext) {
     if (game.tiles_remaining == 0) return;
     let pos = *vector::borrow(&game.players_positions, player_uindex);
 
     // 위치에 타일이 존재하는지 확인
-    if (!dof::exists_<Coord>(&game.id, &pos)) {
-        return; // 타일 없음, 무시
+    if (!dof::exists_<Coord>(&game.id, pos)) {
+        return // 타일 없음, 무시
     };
 
     // 타일 mutable borrow
-    let tile = dof::borrow_mut<Coord, SuiTile>(&mut game.id, &pos);
+    let tile = dof::borrow_mut<Coord, SuiTile>(&mut game.id, pos);
     assert!(!tile.claimed, E_ALREADY_CLAIMED);
 
     let paddr = *vector::borrow(&game.players, player_uindex);
@@ -603,10 +603,10 @@ public fun get_tile_positions(game: &Game): vector<Coord> {
 
 // 특정 위치의 타일 정보 조회 (position, claimed, owner, reward value if not claimed)
 public fun get_tile_info(game: &Game, pos: Coord): (Coord, u64, bool, Option<address>) {
-    if (!dof::exists_<Coord>(&game.id, &pos)) {
+    if (!dof::exists_<Coord>(&game.id, pos)) {
         abort E_TILE_NOT_FOUND
     };
-    let tile = dof::borrow<Coord, SuiTile>(&game.id, &pos);
+    let tile = dof::borrow<Coord, SuiTile>(&game.id, pos);
     let reward_value = if (option::is_some(&tile.reward)) {
         coin::value(option::borrow(&tile.reward))
     } else {
