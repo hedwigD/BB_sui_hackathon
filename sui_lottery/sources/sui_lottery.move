@@ -8,8 +8,9 @@ use sui::dynamic_object_field as dof;
 use sui::object::{Self, ID, UID};
 use sui::tx_context::{Self, TxContext};
 use sui::transfer;
-use sui::option::{Self, Option};
-use sui::vec_set::{Self, VecSet};
+use std::option::{Self as option, Option};
+use sui::vec_set::{Self as vec_set, VecSet};
+use std::vector;
 
 // --------------------------------------------------
 // Constants / Errors
@@ -19,9 +20,9 @@ const MAX_TILES: u64 = 10;
 const TURN_TIMEOUT_MS: u64 = 3000;
 const DEFAULT_CAP_MOVES: u64 = 10000;
 const DIR_NONE: u8 = 255;
-const JOIN_FEE: u64 = 50000000;             // 0.05 SUI in MIST (10^9 MIST = 1 SUI)
-const TOTAL_POT: u64 = 100000000;           // 0.1 SUI in MIST
-const TILE_REWARD: u64 = 10000000;          // 0.01 SUI per tile in MIST
+const JOIN_FEE: u64 = 50_000_000;           // 0.05 SUI in MIST (10^9 MIST = 1 SUI)
+const TOTAL_POT: u64 = 100_000_000;         // 0.1 SUI in MIST
+const TILE_REWARD: u64 = 10_000_000;        // 0.01 SUI per tile in MIST
 
 // 상태코드: 0 Lobby, 1 Placement, 2 Playing, 3 Finished
 const STATUS_LOBBY: u8 = 0;
@@ -42,9 +43,9 @@ const E_BAD_COORD: u64 = 24;
 const E_ALREADY_PLACED: u64 = 25;
 const E_NOT_PLACEMENT: u64 = 26;
 const E_NOT_BOTH_PLACED: u64 = 27;
-const E_TILE_NOT_FOUND: u64 = 28;           // 추가: 타일 없음
-const E_ALREADY_CLAIMED: u64 = 29;          // 추가: 이미 캡처됨
-const E_INSUFFICIENT_POT: u64 = 30;         // 추가: pot 부족
+const E_TILE_NOT_FOUND: u64 = 28;           // 타일 없음/보상 없음
+const E_ALREADY_CLAIMED: u64 = 29;          // 이미 캡처됨
+const E_INSUFFICIENT_POT: u64 = 30;         // pot 부족
 
 // --------------------------------------------------
 // Structs
@@ -292,7 +293,7 @@ public entry fun start_game(
     assert!(coin::value(&game.pot) == TOTAL_POT, E_WRONG_FUNDING_AMOUNT);
 
     // 타일 생성 (pot을 10개로 쪼개서 각 타일에 배정)
-    create_tiles(game, ctx);
+    create_tiles(game, clock, ctx);
 
     // MoveCap 생성 및 전송
     create_move_caps(game, ctx);
@@ -416,7 +417,7 @@ public entry fun force_timeout_move(
 // --------------------------------------------------
 // Tile generation / capture
 // --------------------------------------------------
-fun create_tiles(game: &mut Game, ctx: &mut TxContext) {
+fun create_tiles(game: &mut Game, clock: &Clock, ctx: &mut TxContext) {
     let mut placed_positions = vec_set::empty<Coord>();
     let mut i = 0;
     while (i < MAX_TILES) {
@@ -426,14 +427,13 @@ fun create_tiles(game: &mut Game, ctx: &mut TxContext) {
 
         // 중복되지 않는 위치 생성
         let mut pos: Coord;
-
         loop {
-            let now = clock::timestamp_ms(clock); 
-            pos = pseudo_position(now, game.board_size);
+            let now = clock::timestamp_ms(clock);
+            pos = pseudo_position(now + i, game.board_size);
             if (!vec_set::contains(&placed_positions, &pos)) {
                 break
             };
-            i = i + 1; // 시드 변경을 위해 i 증가 (간단한 방법)
+            i = i + 1; // 시드 변경
         };
         vec_set::insert(&mut placed_positions, pos);
 
@@ -441,13 +441,13 @@ fun create_tiles(game: &mut Game, ctx: &mut TxContext) {
             id: object::new(ctx),
             game_id: object::uid_to_inner(&game.id),
             position: pos,
-            reward: option::some(reward_coin),
+            reward: option::some<Coin<SUI>>(reward_coin),
             claimed: false,
             owner: option::none<address>(),
         };
 
         // Game의 dynamic object field에 추가 (키: Coord, 값: SuiTile)
-        dof::add(&mut game.id, pos, tile);
+        dof::add<Coord, SuiTile>(&mut game.id, pos, tile);
 
         // 조회용 position 목록 추가
         vector::push_back(&mut game.tile_positions, pos);
@@ -461,12 +461,12 @@ fun capture_if_tile(game: &mut Game, player_uindex: u64, ctx: &mut TxContext) {
     let pos = *vector::borrow(&game.players_positions, player_uindex);
 
     // 위치에 타일이 존재하는지 확인
-    if (!dof::exists_<Coord>(&game.id, pos)) {
+    if (!dof::exists_<Coord>(&game.id, &pos)) {
         return; // 타일 없음, 무시
     };
 
     // 타일 mutable borrow
-    let tile = dof::borrow_mut<Coord, SuiTile>(&mut game.id, pos);
+    let tile = dof::borrow_mut<Coord, SuiTile>(&mut game.id, &pos);
     assert!(!tile.claimed, E_ALREADY_CLAIMED);
 
     let paddr = *vector::borrow(&game.players, player_uindex);
@@ -477,7 +477,7 @@ fun capture_if_tile(game: &mut Game, player_uindex: u64, ctx: &mut TxContext) {
     let reward = option::extract(reward_opt);
     let tile_value = coin::value(&reward);
 
-    // 점수 업데이트
+    // 점수 업데이트 (보상 코인 값만큼 가산)
     let cur = *vector::borrow(&game.players_scores, player_uindex);
     let new_score = cur + tile_value;
     *vector::borrow_mut(&mut game.players_scores, player_uindex) = new_score;
@@ -485,7 +485,7 @@ fun capture_if_tile(game: &mut Game, player_uindex: u64, ctx: &mut TxContext) {
 
     // 타일 상태 업데이트
     tile.claimed = true;
-    tile.owner = option::some(paddr);
+    tile.owner = option::some<address>(paddr);
 
     // 보상 코인 소유권 이전
     transfer::public_transfer(reward, paddr);
@@ -603,10 +603,10 @@ public fun get_tile_positions(game: &Game): vector<Coord> {
 
 // 특정 위치의 타일 정보 조회 (position, claimed, owner, reward value if not claimed)
 public fun get_tile_info(game: &Game, pos: Coord): (Coord, u64, bool, Option<address>) {
-    if (!dof::exists_<Coord>(&game.id, pos)) {
+    if (!dof::exists_<Coord>(&game.id, &pos)) {
         abort E_TILE_NOT_FOUND
     };
-    let tile = dof::borrow<Coord, SuiTile>(&game.id, pos);
+    let tile = dof::borrow<Coord, SuiTile>(&game.id, &pos);
     let reward_value = if (option::is_some(&tile.reward)) {
         coin::value(option::borrow(&tile.reward))
     } else {
