@@ -5,9 +5,57 @@ import { TransactionBlock } from '@mysten/sui.js/transactions';
 export const NETWORK = 'testnet';
 export const SUI_CLIENT = new SuiClient({ url: `https://fullnode.${NETWORK}.sui.io:443` });
 
-// 패키지/오브젝트 상수
-export const PACKAGE_ID = '0x37729a842095a49b0ade665263db7c8f66b32de45bc3fd9876f38431996b689a';
-export const REGISTRY_ID = '0x425b190e7e86319238b374dd0310dff0b8f3ffc819c4682f2acb0102384904b0';
+// 패키지/오브젝트 상수 - 수정된 올바른 패키지 ID
+export const PACKAGE_ID = '0x7f40ebb607eb4109ab7f5181e8d8bcd315a6ef7bf9c59f2aa29f11801a30a67d';
+export const REGISTRY_ID = '0x5203e641d92407310a2df803f2412736d0a804fbdb6689886444f3b10d15b402';
+
+// Debug function to check if objects exist and inspect package modules
+export async function checkDeployedObjects() {
+  console.log('[DEBUG] Checking package:', PACKAGE_ID);
+  try {
+    const pkg = await SUI_CLIENT.getObject({
+      id: PACKAGE_ID,
+      options: { showContent: true, showType: true }
+    });
+    console.log('[DEBUG] Package result:', pkg);
+    
+    // Try to get normalized modules to inspect function signatures
+    try {
+      const normalizedModules = await SUI_CLIENT.getNormalizedMoveModulesByPackage({
+        package: PACKAGE_ID
+      });
+      console.log('[DEBUG] Package modules:', normalizedModules);
+      
+      // Look for the tile_game_core module and join_game function
+      const tileGameModule = normalizedModules.tile_game_core;
+      if (tileGameModule && tileGameModule.exposedFunctions) {
+        const joinGameFunc = tileGameModule.exposedFunctions.join_game;
+        console.log('[DEBUG] join_game function signature:', joinGameFunc);
+        console.log('[DEBUG] join_game parameters:', joinGameFunc?.parameters);
+        
+        // Also check create_game for comparison
+        const createGameFunc = tileGameModule.exposedFunctions.create_game;
+        console.log('[DEBUG] create_game function signature:', createGameFunc);
+        console.log('[DEBUG] create_game parameters:', createGameFunc?.parameters);
+      }
+    } catch (e) {
+      console.warn('[DEBUG] Could not fetch normalized modules:', e);
+    }
+  } catch (e) {
+    console.error('[DEBUG] Package check failed:', e);
+  }
+
+  console.log('[DEBUG] Checking registry:', REGISTRY_ID);
+  try {
+    const registry = await SUI_CLIENT.getObject({
+      id: REGISTRY_ID,
+      options: { showContent: true, showType: true }
+    });
+    console.log('[DEBUG] Registry result:', registry);
+  } catch (e) {
+    console.error('[DEBUG] Registry check failed:', e);
+  }
+}
 export const CLOCK_ID = '0x6';
 export const BOARD_SIZE = 11;
 
@@ -15,6 +63,10 @@ export const BOARD_SIZE = 11;
 // 트랜잭션 빌더
 // --------------------------------------------------
 export function createGame(registryId: string) {
+  console.log('[DEBUG] Creating game with:');
+  console.log('[DEBUG] - PACKAGE_ID:', PACKAGE_ID);
+  console.log('[DEBUG] - REGISTRY_ID:', registryId);
+  
   const tx = new TransactionBlock();
   tx.moveCall({
     target: `${PACKAGE_ID}::tile_game_core::create_game`,
@@ -24,20 +76,42 @@ export function createGame(registryId: string) {
 }
 
 export function joinGame(gameId: string, coinId: string) {
+  console.log('[DEBUG] Joining game with:');
+  console.log('[DEBUG] - PACKAGE_ID:', PACKAGE_ID);
+  console.log('[DEBUG] - gameId:', gameId);
+  console.log('[DEBUG] - coinId:', coinId);
+  
   const tx = new TransactionBlock();
   
-  // Split exactly 0.05 SUI (50_000_000 MIST) for join fee
-  const [joinFeeCoin] = tx.splitCoins(tx.object(coinId), [tx.pure.u64(50_000_000)]);
+  try {
+    // Create the game object input first
+    const gameObj = tx.object(gameId);
+    
+    // Split exactly 0.05 SUI (50_000_000 MIST) for joining fee
+    const [feeAmount] = tx.splitCoins(tx.object(coinId), [tx.pure.u64(50_000_000)]);
+    console.log('[DEBUG] Split coin created successfully');
+    
+    tx.moveCall({
+      target: `${PACKAGE_ID}::tile_game_core::join_game`,
+      arguments: [
+        gameObj,     // game: &mut Game
+        feeAmount,   // fee: Coin<SUI>
+      ],
+    });
+    console.log('[DEBUG] Move call added successfully');
+  } catch (e) {
+    console.error('[DEBUG] Error building join transaction:', e);
+    throw e;
+  }
   
-  tx.moveCall({
-    target: `${PACKAGE_ID}::tile_game_core::join_game`,
-    arguments: [tx.object(gameId), joinFeeCoin],
-  });
   return tx;
 }
 
 export function startGame(gameId: string) {
   const tx = new TransactionBlock();
+  
+  console.log('[DEBUG] Creating startGame transaction for gameId:', gameId);
+  console.log('[DEBUG] Using CLOCK_ID:', CLOCK_ID);
   
   tx.moveCall({
     target: `${PACKAGE_ID}::tile_game_core::start_game`,
@@ -266,28 +340,31 @@ export function extractGameIdFromObjectChanges(objectChanges: any[] | undefined)
   return null;
 }
 
+
 export function extractGameIdFromEffects(effects: any): string | null {
-  if (!effects) return null;
-  if (Array.isArray(effects.created)) {
-    for (const c of effects.created) {
-      const id =
-        c.reference?.objectId ||
-        c.reference?.object_id ||
-        c.objectId;
-      if (id) return id;
+  console.log('Effects:', effects);
+  
+  // created objects에서 Game 타입 찾기
+  const created = effects.created || [];
+  for (const obj of created) {
+    if (obj.owner && obj.owner.Shared) {
+      console.log('Found shared object:', obj);
+      return obj.reference.objectId;
     }
   }
-  if (Array.isArray(effects.mutated)) {
-    for (const m of effects.mutated) {
-      const id =
-        m.reference?.objectId ||
-        m.reference?.object_id ||
-        m.objectId;
-      if (id) return id;
+  
+  // objectChanges에서도 찾아보기
+  const objectChanges = effects.objectChanges || [];
+  for (const change of objectChanges) {
+    if (change.type === 'created' && change.objectType?.includes('Game')) {
+      console.log('Found game in objectChanges:', change);
+      return change.objectId;
     }
   }
+  
   return null;
 }
+
 
 // --------------------------------------------------
 // MoveCap ID 추출 유틸 (startGame 후 effects에서 추출)

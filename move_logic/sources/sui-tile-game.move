@@ -8,7 +8,7 @@ use sui::dynamic_object_field as dof;
 use sui::object::{Self, ID, UID};
 use sui::tx_context::{Self, TxContext};
 use sui::transfer;
-use sui::option::{Self, Option};
+use std::option::{Self, Option};
 use sui::vec_set::{Self, VecSet};
 
 // --------------------------------------------------
@@ -164,7 +164,7 @@ fun init(ctx: &mut TxContext) {
 // --------------------------------------------------
 // Game creation / joining
 // --------------------------------------------------
-public entry fun create_game(registry: &mut GameRegistry, ctx: &mut TxContext): ID {
+public entry fun create_game(registry: &mut GameRegistry, ctx: &mut TxContext) {
     let gid = object::new(ctx);
     let gid_inner = object::uid_to_inner(&gid);
     let game = Game {
@@ -194,7 +194,7 @@ public entry fun create_game(registry: &mut GameRegistry, ctx: &mut TxContext): 
     vector::push_back(&mut registry.games, gid_inner);
     event::emit(GameCreated { game_id: gid_inner, creator: tx_context::sender(ctx), board_size: BOARD_SIZE });
     transfer::share_object(game);
-    gid_inner
+    // 반환값 제거
 }
 
 public entry fun join_game(game: &mut Game, fee: Coin<SUI>, ctx: &mut TxContext) {
@@ -292,7 +292,7 @@ public entry fun start_game(
     assert!(coin::value(&game.pot) == TOTAL_POT, E_WRONG_FUNDING_AMOUNT);
 
     // 타일 생성 (pot을 10개로 쪼개서 각 타일에 배정)
-    create_tiles(game, ctx);
+    create_tiles(game, clock, ctx);
 
     // MoveCap 생성 및 전송
     create_move_caps(game, ctx);
@@ -312,8 +312,7 @@ public entry fun start_game(
 // --------------------------------------------------
 // MoveCap creation
 // --------------------------------------------------
-public entry fun create_move_caps(game: &mut Game, ctx: &mut TxContext) {
-    assert!(!game.move_caps_created, E_INVALID_PLAYER);
+fun create_move_caps(game: &mut Game, ctx: &mut TxContext) {
     let p0 = *vector::borrow(&game.players, 0);
     let p1 = *vector::borrow(&game.players, 1);
 
@@ -416,7 +415,7 @@ public entry fun force_timeout_move(
 // --------------------------------------------------
 // Tile generation / capture
 // --------------------------------------------------
-fun create_tiles(game: &mut Game, ctx: &mut TxContext) {
+fun create_tiles(game: &mut Game, clock: &Clock, ctx: &mut TxContext) {
     let mut placed_positions = vec_set::empty<Coord>();
     let mut i = 0;
     while (i < MAX_TILES) {
@@ -427,14 +426,16 @@ fun create_tiles(game: &mut Game, ctx: &mut TxContext) {
         // 중복되지 않는 위치 생성
         let mut pos: Coord;
 
+        let mut attempts = 0;
         loop {
-            let now = clock::timestamp_ms(clock); 
-            pos = pseudo_position(now, game.board_size);
+            let seed = clock::timestamp_ms(clock) + i + attempts;
+            pos = pseudo_position(seed, game.board_size);
             if (!vec_set::contains(&placed_positions, &pos)) {
                 break
             };
-            i = i + 1; // 시드 변경을 위해 i 증가 (간단한 방법)
+            attempts = attempts + 1;
         };
+
         vec_set::insert(&mut placed_positions, pos);
 
         let tile = SuiTile {
@@ -456,7 +457,7 @@ fun create_tiles(game: &mut Game, ctx: &mut TxContext) {
     };
 }
 
-fun capture_if_tile(game: &mut Game, player_uindex: u64, ctx: &mut TxContext) {
+fun capture_if_tile(game: &mut Game, player_uindex: u64, _ctx: &mut TxContext) {
     if (game.tiles_remaining == 0) return;
     let pos = *vector::borrow(&game.players_positions, player_uindex);
 

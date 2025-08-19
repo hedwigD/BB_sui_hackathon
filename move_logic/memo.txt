@@ -1,6 +1,5 @@
-  Key deployment details:
-  - Package ID: 0x2e5b7573c70d371547138f89e09983369a4e2fec29ec60c0ace0c6f6f83aabca
-  - Transaction: 3dxDAGjG8jWUx1gbyqQ5L9x5Ybjjv3fxxyovrnzAC3jh
-  - GameRegistry (Shared Object): 0x035ceb3c222813a6c25b851e61733b5ff0e9fff8525fe64bad1d02f03f0adb71
-  - UpgradeCap: 0xc7e0adf90a72e60d4aee825cfb1f8f46140f9ac0fe935f86eb4d49dd0033f634
-  - Gas Cost: ~0.047 SUI
+  - Package ID: 0x11061d8a6c0336c911c098c4a391ced46146277779894e37fa56a3886d2fac54
+
+  - Registry ID: 0x3191cb97637d96900eee22a5bd8d5bd48c6f6875ba1983b6043f462e18c097d4
+
+  - Transaction Digest: EMrZtY7u6UDbaVRPoREPxLtV4A295m473b55p6VddjYH
