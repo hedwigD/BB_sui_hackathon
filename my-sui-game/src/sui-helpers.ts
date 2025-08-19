@@ -5,9 +5,9 @@ import { TransactionBlock } from '@mysten/sui.js/transactions';
 export const NETWORK = 'testnet';
 export const SUI_CLIENT = new SuiClient({ url: `https://fullnode.${NETWORK}.sui.io:443` });
 
-// 패키지/오브젝트 상수 - 수정된 올바른 패키지 ID
-export const PACKAGE_ID = '0x7f40ebb607eb4109ab7f5181e8d8bcd315a6ef7bf9c59f2aa29f11801a30a67d';
-export const REGISTRY_ID = '0x5203e641d92407310a2df803f2412736d0a804fbdb6689886444f3b10d15b402';
+// 패키지/오브젝트 상수 - 새로 배포된 패키지 ID
+export const PACKAGE_ID = '0x5ef053bccf5ceb726968b36738295bd55b2e41eec9b5cf91a81c680e3adae16a';
+export const REGISTRY_ID = '0xe8192d5e26092007e59b0d513d8bbd715d0a2cafdb64636b7cbed6118b2c14c2';
 
 // Debug function to check if objects exist and inspect package modules
 export async function checkDeployedObjects() {

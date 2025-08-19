@@ -83,24 +83,8 @@ const TileGameFrontend: React.FC = () => {
       // Set sender for the transaction
       tx.setSender(account?.address || '');
       
-      // Try dry run, but continue even if it fails
-      try {
-        const serialized = await tx.build({ client: SUI_CLIENT });
-        console.log('[DEBUG] Transaction serialized successfully');
-        const dryRunResult = await SUI_CLIENT.dryRunTransactionBlock({
-          transactionBlock: serialized,
-        });
-        console.log('[DEBUG] Dry run result:', dryRunResult);
-        
-        if (dryRunResult.effects.status.status !== 'success') {
-          const error = dryRunResult.effects.status.error;
-          console.warn('[DEBUG] Dry run failed, but continuing:', error);
-          // Don't return null here, let the wallet try anyway
-        }
-      } catch (dryRunError) {
-        console.warn('[DEBUG] Dry run failed with error:', dryRunError);
-        // Continue anyway - sometimes dry run fails but actual execution works
-      }
+      // Skip dry run for now - it's causing issues
+      console.log('[DEBUG] Skipping dry run, proceeding directly to wallet signature');
       
       const result = await signAndExecuteTransactionBlock({
         transactionBlock: tx as any,
@@ -217,6 +201,9 @@ const handleJoinGame = async () => {
     console.log('[DEBUG] Checking game status before joining:', joinGameIdInput);
     const gameState = await getParsedGame(joinGameIdInput);
     console.log('[DEBUG] Game state:', gameState);
+    console.log('[DEBUG] Game status value:', gameState?.status);
+    console.log('[DEBUG] Current players:', gameState?.players);
+    console.log('[DEBUG] Current user address:', account?.address);
     
     if (!gameState) {
       setError('게임을 찾을 수 없습니다.');
