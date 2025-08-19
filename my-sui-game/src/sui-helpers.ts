@@ -23,26 +23,26 @@ export function createGame(registryId: string) {
   return tx;
 }
 
-export function joinGame(gameId: string) {
+export function joinGame(gameId: string, coinId: string) {
   const tx = new TransactionBlock();
+  
+  // Split exactly 0.05 SUI (50_000_000 MIST) for join fee
+  const [joinFeeCoin] = tx.splitCoins(tx.object(coinId), [tx.pure.u64(50_000_000)]);
+  
   tx.moveCall({
     target: `${PACKAGE_ID}::tile_game_core::join_game`,
-    arguments: [tx.object(gameId)],
+    arguments: [tx.object(gameId), joinFeeCoin],
   });
   return tx;
 }
 
-export function startGame(gameId: string, coinId: string) {
+export function startGame(gameId: string) {
   const tx = new TransactionBlock();
-  
-  // Split exactly 0.5 SUI (500_000_000 MIST) from the specified coin
-  const [splitCoin] = tx.splitCoins(tx.object(coinId), [tx.pure.u64(500_000_000)]);
   
   tx.moveCall({
     target: `${PACKAGE_ID}::tile_game_core::start_game`,
     arguments: [
       tx.object(gameId),
-      splitCoin,
       tx.object(CLOCK_ID),
     ],
   });
