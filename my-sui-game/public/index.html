@@ -5,7 +5,14 @@
     <link rel="icon" href="%PUBLIC_URL%/favicon.ico" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#000000" />
-    <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-eval'; object-src 'none';" />
+    <meta http-equiv="Content-Security-Policy"
+      content="
+      default-src 'self';
+      script-src 'self' 'unsafe-eval' https://apis.google.com https://www.gstatic.com;
+      connect-src 'self' https://www.googleapis.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://firestore.googleapis.com https://www.gstatic.com https://apis.google.com;
+      img-src 'self' data: https://*.gstatic.com https://*.googleusercontent.com;
+      style-src 'self' 'unsafe-inline';
+      frame-src https://accounts.google.com https://*.google.com;">
     <meta
       name="description"
       content="Web site created using create-react-app"
