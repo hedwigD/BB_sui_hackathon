@@ -373,7 +373,7 @@ const TileGameFrontend: React.FC = () => {
           if (tile.claimed) {
             board[y][x] = '✓';
           } else {
-            board[y][x] = '💰';
+            board[y][x] = 'SUI_LOGO'; // Special marker for Sui logo
           }
         }
       }
@@ -434,8 +434,8 @@ const TileGameFrontend: React.FC = () => {
               borderColor = '#F44336';
               textColor = '#FFCDD2';
             } else {
-              bgColor = 'rgba(255, 193, 7, 0.3)';
-              borderColor = '#FFC107';
+              bgColor = 'rgba(96, 165, 250, 0.2)'; // Blue background for SUI logo
+              borderColor = '#60A5FA';
               textColor = '#FFF8E1';
               fontSize = '18px';
             }
@@ -495,7 +495,19 @@ const TileGameFrontend: React.FC = () => {
               
               {/* Cell content */}
               <div style={{ zIndex: 1 }}>
-                {cell}
+                {cell === 'SUI_LOGO' ? (
+                  <img 
+                    src="/sui-logo.png" 
+                    alt="SUI Token"
+                    style={{
+                      width: '30px',
+                      height: '30px',
+                      objectFit: 'contain'
+                    }}
+                  />
+                ) : (
+                  cell
+                )}
               </div>
               
               {/* Selection indicator */}
@@ -1053,7 +1065,7 @@ const TileGameFrontend: React.FC = () => {
                       color: 'rgba(255,255,255,0.8)',
                       textAlign: 'center'
                     }}>
-                      💰 = SUI Tokens (clickable) • ✓ = Captured • P1/P2 = Players
+                      🔵 = SUI Tokens (clickable) • ✓ = Captured • P1/P2 = Players
                     </div>
                     
                     <div style={{
@@ -1158,7 +1170,7 @@ const TileGameFrontend: React.FC = () => {
                                   background: tile.claimed ? 'rgba(244, 67, 54, 0.3)' : 'rgba(76, 175, 80, 0.3)',
                                   color: tile.claimed ? '#FFCDD2' : '#C8E6C9'
                                 }}>
-                                  {tile.claimed ? '✓ Captured' : '💰 Available'}
+                                  {tile.claimed ? '✓ Captured' : '🔵 Available'}
                                 </span>
                                 {tile.owner && (
                                   <span style={{ 
