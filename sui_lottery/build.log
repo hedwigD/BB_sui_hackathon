@@ -1,4 +1,0 @@
-Failed to build Move modules: Unable to parse Move package manifest
-
-Caused by:
-    expected a table key, found a newline at line 11 column 9.
