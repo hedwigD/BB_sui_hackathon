@@ -36,14 +36,29 @@ const TileGameFrontend: React.FC = () => {
     if (!gameId) return;
     const stopPoll = pollGame(gameId, (updatedGame) => {
       setParsedGame(updatedGame);
+      
+      // If game is now playing and we don't have a MoveCap, try to find it
+      if (updatedGame?.status === 2 && !moveCapId && account?.address) {
+        console.log('[DEBUG] Game is playing but no MoveCap found, searching...');
+        setTimeout(() => {
+          findPlayerMoveCap();
+        }, 1000);
+      }
     }, 2000, { immediate: true });
     return () => stopPoll();
-  }, [gameId]);
+  }, [gameId, moveCapId, account?.address]);
 
   // 키보드 입력 핸들러 (게임 진행 중에만)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (!parsedGame || parsedGame.status !== 1 || !moveCapId || !gameId) return;
+      console.log('[DEBUG] Key pressed:', e.key);
+      console.log('[DEBUG] Game status:', parsedGame?.status, 'MoveCap:', !!moveCapId, 'GameID:', !!gameId);
+      
+      if (!parsedGame || parsedGame.status !== 2 || !moveCapId || !gameId) {
+        console.log('[DEBUG] Movement blocked - requirements not met');
+        return;
+      }
+      
       let direction: number | null = null;
       switch (e.key.toLowerCase()) {
         case 'w':
@@ -56,6 +71,7 @@ const TileGameFrontend: React.FC = () => {
         case 'arrowright': direction = 3; break;
       }
       if (direction !== null) {
+        console.log('[DEBUG] Calling handleMove with direction:', direction);
         handleMove(direction);
       }
     };
@@ -274,6 +290,13 @@ const handleJoinGame = async () => {
         
         if (newMoveCapId) {
           setMoveCapId(newMoveCapId);
+          console.log('[DEBUG] MoveCap ID set:', newMoveCapId);
+        } else {
+          console.log('[DEBUG] No MoveCap found in transaction results, will need to find it in player objects');
+          // Try to find MoveCap in player's owned objects
+          setTimeout(async () => {
+            await findPlayerMoveCap();
+          }, 2000); // Wait a bit for blockchain to process
         }
       }
     } catch (err) {
@@ -283,11 +306,18 @@ const handleJoinGame = async () => {
 
   // 이동
   const handleMove = async (direction: number) => {
+    console.log('[DEBUG] handleMove called with direction:', direction);
+    console.log('[DEBUG] gameId:', gameId, 'moveCapId:', moveCapId);
+    
     if (!gameId || !moveCapId) {
+      console.log('[DEBUG] Move blocked - missing gameId or moveCapId');
       setError('게임 ID 또는 MoveCap ID 필요');
       return;
     }
+    
+    console.log('[DEBUG] Creating move transaction...');
     const tx = moveWithCap(gameId, moveCapId, direction);
+    console.log('[DEBUG] Executing move transaction...');
     await executeTx(tx);
   };
 
@@ -329,6 +359,52 @@ const handleJoinGame = async () => {
       }
     } catch (err) {
       setError(`시작 위치 선택 실패: ${err instanceof Error ? err.message : '알 수 없는 오류'}`);
+    }
+  };
+
+  // Find MoveCap in player's owned objects
+  const findPlayerMoveCap = async () => {
+    if (!account?.address || !gameId) return;
+
+    try {
+      console.log('[DEBUG] Searching for MoveCap in player objects...');
+      
+      // Get all objects owned by the player
+      const ownedObjects = await SUI_CLIENT.getOwnedObjects({
+        owner: account.address,
+        options: {
+          showContent: true,
+          showType: true,
+        },
+      });
+
+      console.log('[DEBUG] Player owned objects:', ownedObjects);
+
+      // Find MoveCap for this specific game
+      for (const obj of ownedObjects.data) {
+        const objectType = obj.data?.type;
+        if (objectType && objectType.includes('MoveCap')) {
+          console.log('[DEBUG] Found MoveCap object:', obj);
+          
+          // Check if this MoveCap is for the current game
+          const content = obj.data?.content;
+          if (content && content.dataType === 'moveObject' && content.fields && obj.data) {
+            const gameId_field = (content.fields as any).game_id;
+            console.log('[DEBUG] MoveCap game_id:', gameId_field, 'current gameId:', gameId);
+            
+            if (gameId_field === gameId) {
+              const moveCapId = obj.data.objectId;
+              console.log('[DEBUG] Found matching MoveCap:', moveCapId);
+              setMoveCapId(moveCapId);
+              return;
+            }
+          }
+        }
+      }
+      
+      console.log('[DEBUG] No matching MoveCap found');
+    } catch (err) {
+      console.error('[DEBUG] Error finding MoveCap:', err);
     }
   };
 
@@ -463,6 +539,10 @@ const handleJoinGame = async () => {
                   <>
                     <p>게임 진행 중! WASD 또는 화살표 키로 이동하세요.</p>
                     <p>현재 턴: {parsedGame?.currentTurn === 0 ? '플레이어 1' : '플레이어 2'}</p>
+                    <p>MoveCap 상태: {moveCapId ? `✓ ${moveCapId.slice(0, 8)}...` : '✗ 없음'}</p>
+                    {!moveCapId && (
+                      <button onClick={findPlayerMoveCap} disabled={loading}>MoveCap 찾기</button>
+                    )}
                     <button onClick={handleForceTimeout} disabled={loading}>타임아웃 강제 이동</button>
                   </>
                 )}
