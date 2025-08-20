@@ -5,11 +5,7 @@ use sui::event;
 use sui::coin::{Self, Coin};
 use sui::sui::SUI;
 use sui::dynamic_object_field as dof;
-use sui::object::{Self, ID, UID};
-use sui::tx_context::{Self, TxContext};
-use sui::transfer;
-use std::option::{Self, Option};
-use sui::vec_set::{Self, VecSet};
+use sui::vec_set;
 
 // --------------------------------------------------
 // Constants / Errors
@@ -463,7 +459,7 @@ fun capture_if_tile(game: &mut Game, player_uindex: u64, _ctx: &mut TxContext) {
 
     // 위치에 타일이 존재하는지 확인
     if (!dof::exists_<Coord>(&game.id, pos)) {
-        return; // 타일 없음, 무시
+        return // 타일 없음, 무시
     };
 
     // 타일 mutable borrow
