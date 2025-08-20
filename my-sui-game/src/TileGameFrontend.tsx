@@ -7,10 +7,10 @@ import {
   BOARD_SIZE,
   createGame,
   joinGame,
+  chooseStart,
   startGame,
   moveWithCap,
   forceTimeoutMove,
-  findSuiCoin,
   getParsedGame,
   pollGame,
   ParsedGame,
@@ -29,6 +29,7 @@ const TileGameFrontend: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [joinGameIdInput, setJoinGameIdInput] = useState('');
+  const [selectedPosition, setSelectedPosition] = useState<{x: number, y: number} | null>(null);
 
   // 게임 상태 폴링
   useEffect(() => {
@@ -215,14 +216,18 @@ const handleJoinGame = async () => {
       return;
     }
     
-    // 0.05 SUI (50,000,000 MIST) 코인 찾기 - JOIN_FEE
-    const coinId = await findSuiCoin(account.address, BigInt(50_000_000));
-    if (!coinId) {
-      setError('충분한 SUI가 없습니다. (최소 0.05 SUI 필요)');
+    // Check if user has enough SUI for joining fee + gas
+    const balance = await SUI_CLIENT.getBalance({
+      owner: account.address,
+      coinType: '0x2::sui::SUI'
+    });
+    const balanceInSui = Number(balance.totalBalance) / 1_000_000_000;
+    if (balanceInSui < 0.1) { // Need at least 0.1 SUI (0.05 for fee + some for gas)
+      setError(`충분한 SUI가 없습니다. (최소 0.1 SUI 필요, 현재: ${balanceInSui.toFixed(4)} SUI)`);
       return;
     }
     
-    const tx = joinGame(joinGameIdInput, coinId);
+    const tx = joinGame(joinGameIdInput, ""); // coinId not needed anymore
     const result = await executeTx(tx);
     
     if (result) {
@@ -296,7 +301,38 @@ const handleJoinGame = async () => {
     await executeTx(tx);
   };
 
-  // 보드 렌더링 (11x11 그리드)
+  // 수동으로 게임 상태 새로고침
+  const handleRefreshGame = async () => {
+    if (!gameId) return;
+    try {
+      const updated = await getParsedGame(gameId);
+      setParsedGame(updated);
+    } catch (err) {
+      console.error('Failed to refresh game:', err);
+    }
+  };
+
+  // 시작 위치 선택
+  const handleChooseStart = async () => {
+    if (!gameId || !selectedPosition || !account?.address) {
+      setError('게임 ID, 선택된 위치, 지갑 연결이 필요합니다.');
+      return;
+    }
+
+    try {
+      const tx = chooseStart(gameId, selectedPosition.x, selectedPosition.y);
+      const result = await executeTx(tx);
+      
+      if (result) {
+        console.log('Start position chosen successfully');
+        setSelectedPosition(null); // Clear selection after successful transaction
+      }
+    } catch (err) {
+      setError(`시작 위치 선택 실패: ${err instanceof Error ? err.message : '알 수 없는 오류'}`);
+    }
+  };
+
+  // 보드 렌더링 (10x10 그리드)
   const renderBoard = () => {
     if (!parsedGame) return null;
     const board: string[][] = Array.from({ length: BOARD_SIZE }, () => Array(BOARD_SIZE).fill(' '));
@@ -308,23 +344,56 @@ const handleJoinGame = async () => {
       }
     });
 
+    const handleCellClick = (x: number, y: number) => {
+      if (isPlacement && account?.address) {
+        setSelectedPosition({x, y});
+      }
+    };
+
     // 타일 표시 (간단히 모든 타일 위치에 'T' 표시)
     return (
-      <div style={{ display: 'grid', gridTemplateColumns: `repeat(${BOARD_SIZE}, 20px)`, gap: '1px' }}>
-        {board.flat().map((cell, idx) => (
-          <div key={idx} style={{ width: '20px', height: '20px', border: '1px solid #ccc', textAlign: 'center' }}>
-            {cell}
-          </div>
-        ))}
+      <div style={{ display: 'grid', gridTemplateColumns: `repeat(${BOARD_SIZE}, 30px)`, gap: '1px' }}>
+        {board.flat().map((cell, idx) => {
+          const x = idx % BOARD_SIZE;
+          const y = Math.floor(idx / BOARD_SIZE);
+          const isSelected = selectedPosition?.x === x && selectedPosition?.y === y;
+          const isClickable = isPlacement && account?.address;
+          
+          return (
+            <div 
+              key={idx} 
+              onClick={() => handleCellClick(x, y)}
+              style={{ 
+                width: '30px', 
+                height: '30px', 
+                border: '1px solid #ccc', 
+                textAlign: 'center',
+                backgroundColor: isSelected ? '#lightblue' : isClickable ? '#f0f0f0' : 'white',
+                cursor: isClickable ? 'pointer' : 'default',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: '12px'
+              }}
+            >
+              {cell}
+            </div>
+          );
+        })}
       </div>
     );
   };
 
   // 게임 상태에 따른 UI
-  const isWaiting = parsedGame?.status === 0;
-  const isPlaying = parsedGame?.status === 1;
-  const isEnded = parsedGame?.status === 2 || parsedGame?.tilesRemaining === 0 || !!parsedGame?.winner;
-  const canStart = isWaiting && parsedGame?.players.length >= 2;
+  const isWaiting = parsedGame?.status === 0; // STATUS_LOBBY
+  const isPlacement = parsedGame?.status === 1; // STATUS_PLACEMENT
+  const isPlaying = parsedGame?.status === 2; // STATUS_PLAYING  
+  const isEnded = parsedGame?.status === 3 || parsedGame?.tilesRemaining === 0 || !!parsedGame?.winner; // STATUS_FINISHED
+  
+  // Game can start when both players have chosen their positions
+  const bothPlayersPlaced = parsedGame?.hasPlaced && parsedGame.hasPlaced.length === 2 && 
+    parsedGame.hasPlaced[0] && parsedGame.hasPlaced[1];
+  const canStart = isPlacement && parsedGame?.players.length >= 2 && bothPlayersPlaced;
 
   return (
     <div style={{ padding: '20px' }}>
@@ -352,18 +421,52 @@ const handleJoinGame = async () => {
             <>
               <div>
                 <h2>게임 ID: {gameId}</h2>
+                <p>플레이어 수: {parsedGame?.players.length || 0}</p>
+                <p>게임 상태: {parsedGame?.status === 0 ? 'Lobby' : parsedGame?.status === 1 ? 'Placement' : parsedGame?.status === 2 ? 'Playing' : 'Finished'}</p>
+                <button onClick={handleRefreshGame} disabled={loading}>수동 새로고침</button>
+                
                 {isWaiting && (
                   <>
-                    <p>플레이어 수: {parsedGame?.players.length || 1} (2명 이상 필요)</p>
-                    <button onClick={handleStartGame} disabled={loading || !canStart}>게임 시작</button>
+                    <p>2명 이상의 플레이어가 필요합니다.</p>
                   </>
                 )}
+                
+                {isPlacement && (
+                  <>
+                    <p>시작 위치 선택 단계입니다.</p>
+                    <p>보드에서 클릭하여 시작 위치를 선택하세요.</p>
+                    {parsedGame?.hasPlaced && (
+                      <p>
+                        플레이어 배치 상태: 
+                        P1: {parsedGame.hasPlaced[0] ? '✓' : '✗'} 
+                        {parsedGame.hasPlaced.length > 1 && ` P2: ${parsedGame.hasPlaced[1] ? '✓' : '✗'}`}
+                      </p>
+                    )}
+                    {selectedPosition && (
+                      <p>선택된 위치: ({selectedPosition.x}, {selectedPosition.y})</p>
+                    )}
+                    <button 
+                      onClick={handleChooseStart} 
+                      disabled={loading || !selectedPosition}
+                    >
+                      시작 위치 확정
+                    </button>
+                    {account?.address === parsedGame?.creator && (
+                      <button onClick={handleStartGame} disabled={loading || !canStart}>
+                        게임 시작 {!bothPlayersPlaced && '(모든 플레이어가 배치 완료 필요)'}
+                      </button>
+                    )}
+                  </>
+                )}
+                
                 {isPlaying && (
                   <>
                     <p>게임 진행 중! WASD 또는 화살표 키로 이동하세요.</p>
+                    <p>현재 턴: {parsedGame?.currentTurn === 0 ? '플레이어 1' : '플레이어 2'}</p>
                     <button onClick={handleForceTimeout} disabled={loading}>타임아웃 강제 이동</button>
                   </>
                 )}
+                
                 {isEnded && <p>게임 종료! 승자: {parsedGame?.winner || '무승부'}</p>}
               </div>
 

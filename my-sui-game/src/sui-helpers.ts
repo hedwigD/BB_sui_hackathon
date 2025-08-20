@@ -57,7 +57,7 @@ export async function checkDeployedObjects() {
   }
 }
 export const CLOCK_ID = '0x6';
-export const BOARD_SIZE = 11;
+export const BOARD_SIZE = 10; // Match contract BOARD_SIZE
 
 // --------------------------------------------------
 // 트랜잭션 빌더
@@ -87,8 +87,8 @@ export function joinGame(gameId: string, coinId: string) {
     // Create the game object input first
     const gameObj = tx.object(gameId);
     
-    // Split exactly 0.05 SUI (50_000_000 MIST) for joining fee
-    const [feeAmount] = tx.splitCoins(tx.object(coinId), [tx.pure.u64(50_000_000)]);
+    // Use gas coin (SUI default) and split exactly 0.05 SUI (50_000_000 MIST) for joining fee
+    const [feeAmount] = tx.splitCoins(tx.gas, [tx.pure.u64(50_000_000)]);
     console.log('[DEBUG] Split coin created successfully');
     
     tx.moveCall({
@@ -103,6 +103,25 @@ export function joinGame(gameId: string, coinId: string) {
     console.error('[DEBUG] Error building join transaction:', e);
     throw e;
   }
+  
+  return tx;
+}
+
+export function chooseStart(gameId: string, x: number, y: number) {
+  console.log('[DEBUG] Choosing start position with:');
+  console.log('[DEBUG] - gameId:', gameId);
+  console.log('[DEBUG] - position: (', x, ',', y, ')');
+  
+  const tx = new TransactionBlock();
+  
+  tx.moveCall({
+    target: `${PACKAGE_ID}::tile_game_core::choose_start`,
+    arguments: [
+      tx.object(gameId),
+      tx.pure.u8(x),
+      tx.pure.u8(y),
+    ],
+  });
   
   return tx;
 }
@@ -223,17 +242,24 @@ export interface ParsedGame {
   lastDirections: number[];
   tileIds: string[];
   moveCapCreated: boolean;
+  hasPlaced: boolean[]; // Track which players have placed their start positions
 }
 
 export function parseGameContent(content: any): ParsedGame | null {
-  if (!content || content.dataType !== 'moveObject' || !content.fields) return null;
+  if (!content || content.dataType !== 'moveObject' || !content.fields) {
+    console.log('[DEBUG] parseGameContent: Invalid content structure:', content);
+    return null;
+  }
   const f = content.fields;
+  console.log('[DEBUG] parseGameContent: fields:', f);
+  
   // status 구조체가 enum(Option-like) 형태일 때 value 추출
   const statusVal =
     f.status?.fields?.value ??
     f.status?.value ??
     f.status ??
     0;
+  console.log('[DEBUG] Status value:', statusVal, 'from:', f.status);
 
   // winner 가 Option 구조: { fields: { vec: [] }} 또는 vec[0]
   let winner: string | null = null;
@@ -243,11 +269,16 @@ export function parseGameContent(content: any): ParsedGame | null {
   }
 
   const playersArr: string[] = safeVec<string>(f.players);
+  console.log('[DEBUG] Players array:', playersArr, 'from:', f.players);
+  
   const lastDirs: number[] = safeVec<number>(f.last_directions);
   const scores: number[] = safeVec<number>(f.players_scores);
   const tileIds: string[] = safeVec<string>(f.tile_ids);
+  const hasPlacedArr: boolean[] = safeVec<boolean>(f.has_placed);
 
   const posRaw = safeVec<any>(f.players_positions);
+  console.log('[DEBUG] Positions raw:', posRaw, 'from:', f.players_positions);
+  console.log('[DEBUG] Has placed raw:', hasPlacedArr, 'from:', f.has_placed);
   const playersPositions: ParsedPlayerPosition[] = posRaw.map((p: any) => ({
     x: Number(p.fields?.x ?? 0),
     y: Number(p.fields?.y ?? 0),
@@ -268,6 +299,7 @@ export function parseGameContent(content: any): ParsedGame | null {
     lastDirections: lastDirs.map(Number),
     tileIds,
     moveCapCreated: Boolean(f.move_caps_created),
+    hasPlaced: hasPlacedArr.map(Boolean),
   };
 }
 
@@ -404,7 +436,11 @@ export async function fetchFullTransaction(digest: string) {
 export async function getParsedGame(gameId: string): Promise<ParsedGame | null> {
   const obj = await fetchGame(gameId);
   const content = obj?.data?.content;
-  return parseGameContent(content);
+  console.log('[DEBUG] Raw game object:', obj);
+  console.log('[DEBUG] Game content:', content);
+  const parsed = parseGameContent(content);
+  console.log('[DEBUG] Parsed game:', parsed);
+  return parsed;
 }
 
 // --------------------------------------------------
