@@ -227,6 +227,13 @@ export interface ParsedPlayerPosition {
   y: number;
 }
 
+export interface ParsedTile {
+  position: ParsedPlayerPosition;
+  value: number;
+  claimed: boolean;
+  owner: string | null;
+}
+
 export interface ParsedGame {
   id: string;
   creator: string;
@@ -243,6 +250,7 @@ export interface ParsedGame {
   tileIds: string[];
   moveCapCreated: boolean;
   hasPlaced: boolean[]; // Track which players have placed their start positions
+  tilePositions: ParsedPlayerPosition[]; // All tile positions from the game
 }
 
 export function parseGameContent(content: any): ParsedGame | null {
@@ -284,6 +292,14 @@ export function parseGameContent(content: any): ParsedGame | null {
     y: Number(p.fields?.y ?? 0),
   }));
 
+  // Parse tile positions
+  const tilePositionsRaw = safeVec<any>(f.tile_positions);
+  console.log('[DEBUG] Tile positions raw:', tilePositionsRaw, 'from:', f.tile_positions);
+  const tilePositions: ParsedPlayerPosition[] = tilePositionsRaw.map((p: any) => ({
+    x: Number(p.fields?.x ?? p.x ?? 0),
+    y: Number(p.fields?.y ?? p.y ?? 0),
+  }));
+
   return {
     id: f.id?.id || f.id,
     creator: f.creator,
@@ -300,6 +316,7 @@ export function parseGameContent(content: any): ParsedGame | null {
     tileIds,
     moveCapCreated: Boolean(f.move_caps_created),
     hasPlaced: hasPlacedArr.map(Boolean),
+    tilePositions,
   };
 }
 
@@ -441,6 +458,58 @@ export async function getParsedGame(gameId: string): Promise<ParsedGame | null> 
   const parsed = parseGameContent(content);
   console.log('[DEBUG] Parsed game:', parsed);
   return parsed;
+}
+
+// Fetch detailed tile information for each tile position
+export async function getTileDetails(gameId: string, positions: ParsedPlayerPosition[]): Promise<ParsedTile[]> {
+  const tiles: ParsedTile[] = [];
+  
+  for (const pos of positions) {
+    try {
+      // Fetch the dynamic object field for this position
+      const tileObj = await SUI_CLIENT.getDynamicFieldObject({
+        parentId: gameId,
+        name: {
+          type: `${PACKAGE_ID}::tile_game_core::Coord`,
+          value: { x: pos.x, y: pos.y }
+        }
+      });
+      
+      console.log(`[DEBUG] Tile at (${pos.x}, ${pos.y}):`, tileObj);
+      
+      if (tileObj.data?.content && tileObj.data.content.dataType === 'moveObject') {
+        const fields = tileObj.data.content.fields as any;
+        const reward = fields.reward;
+        let value = 0;
+        
+        // Extract reward value if it exists
+        if (reward && reward.fields && reward.fields.vec && reward.fields.vec.length > 0) {
+          const coinFields = reward.fields.vec[0]?.fields;
+          if (coinFields && coinFields.balance) {
+            value = Number(coinFields.balance);
+          }
+        }
+        
+        tiles.push({
+          position: pos,
+          value,
+          claimed: Boolean(fields.claimed),
+          owner: fields.owner?.fields?.vec?.[0] || null
+        });
+      }
+    } catch (err) {
+      console.log(`[DEBUG] Could not fetch tile at (${pos.x}, ${pos.y}):`, err);
+      // Add a default tile entry even if we can't fetch details
+      tiles.push({
+        position: pos,
+        value: 0,
+        claimed: false,
+        owner: null
+      });
+    }
+  }
+  
+  return tiles;
 }
 
 // --------------------------------------------------
