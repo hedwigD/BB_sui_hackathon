@@ -624,12 +624,3 @@ public fun get_positions(game: &Game): vector<Coord> { game.players_positions }
 public fun get_scores(game: &Game): vector<u64> { game.players_scores }
 public fun get_last_directions(game: &Game): vector<u8> { game.last_directions }
 public fun get_winner(game: &Game): Option<address> { game.winner }
-
-// --------------------------------------------------
-// Test-only
-// --------------------------------------------------
-#[test_only]
-public fun init_for_testing(ctx: &mut TxContext) {
-    let reg = GameRegistry { id: object::new(ctx), games: vector::empty() };
-    transfer::share_object(reg);
-}
