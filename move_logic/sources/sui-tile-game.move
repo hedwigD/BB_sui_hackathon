@@ -5,10 +5,6 @@ use sui::event;
 use sui::coin::{Self, Coin};
 use sui::sui::SUI;
 use sui::dynamic_object_field as dof;
-use sui::object;
-use sui::tx_context::{Self, TxContext};
-use sui::transfer;
-use std::option::{Self, Option};
 use sui::vec_set;
 use sui::random::{Random, new_generator, generate_u8_in_range, generate_u64_in_range};
 
@@ -44,7 +40,6 @@ const E_ALREADY_PLACED: u64 = 25;
 const E_NOT_PLACEMENT: u64 = 26;
 const E_NOT_BOTH_PLACED: u64 = 27;
 const E_TILE_NOT_FOUND: u64 = 28;           // 추가: 타일 없음
-const E_ALREADY_CLAIMED: u64 = 29;          // 추가: 이미 캡처됨
 const E_INSUFFICIENT_POT: u64 = 30;         // 추가: pot 부족
 
 // --------------------------------------------------
@@ -276,6 +271,7 @@ public entry fun choose_start(game: &mut Game, x: u8, y: u8, ctx: &mut TxContext
 // --------------------------------------------------
 // Start Game
 // --------------------------------------------------
+#[allow(lint(public_random))]
 public entry fun start_game(
     game: &mut Game,
     clock: &Clock,
@@ -453,29 +449,29 @@ fun create_tiles(game: &mut Game, rnd: &Random, ctx: &mut TxContext) {
         let reward_coin = coin::split(&mut game.pot, reward_value, ctx);
 
         // 중복되지 않는 위치 생성
-        let mut pos = Coord { x: 0, y: 0 };
+        let mut _pos = Coord { x: 0, y: 0 };
         loop {
             let x = generate_u8_in_range(&mut generator, 0, game.board_size - 1);
             let y = generate_u8_in_range(&mut generator, 0, game.board_size - 1);
-            pos = Coord { x, y };
-            if (!vec_set::contains(&placed_positions, &pos)) {
-                break;
+            _pos = Coord { x, y };
+            if (!vec_set::contains(&placed_positions, &_pos)) {
+                break
             }
         };
 
-        vec_set::insert(&mut placed_positions, pos);
+        vec_set::insert(&mut placed_positions, _pos);
 
         let tile = SuiTile {
             id: object::new(ctx),
             game_id: object::uid_to_inner(&game.id),
-            position: pos,
+            position: _pos,
             reward: option::some(reward_coin),
             claimed: false,
             owner: option::none<address>(),
         };
 
-        dof::add(&mut game.id, pos, tile);
-        vector::push_back(&mut game.tile_positions, pos);
+        dof::add(&mut game.id, _pos, tile);
+        vector::push_back(&mut game.tile_positions, _pos);
         i = i + 1;
     };
 
@@ -489,12 +485,14 @@ fun capture_if_tile(game: &mut Game, player_uindex: u64, _ctx: &mut TxContext) {
 
     // 위치에 타일이 존재하는지 확인
     if (!dof::exists_<Coord>(&game.id, pos)) {
-        return; // 타일 없음, 무시
+        return // 타일 없음, 무시
     };
 
     // 타일 mutable borrow
     let tile = dof::borrow_mut<Coord, SuiTile>(&mut game.id, pos);
-    assert!(!tile.claimed, E_ALREADY_CLAIMED);
+    if (tile.claimed) {
+        return
+    };
 
     let paddr = *vector::borrow(&game.players, player_uindex);
 
