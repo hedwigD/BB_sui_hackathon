@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { ConnectButton, useWallet } from '@suiet/wallet-kit';
-import { TransactionBlock } from '@mysten/sui.js/transactions';
+import { useCurrentAccount, ConnectButton, useSignAndExecuteTransaction, useSuiClient } from '@mysten/dapp-kit';
+import { Transaction } from '@mysten/sui/transactions';
+
+// --- Sui 관련 헬퍼/상수/유틸 임포트 (실제 경로에 맞게 조정) ---
 import {
-  SUI_CLIENT,
   REGISTRY_ID,
   BOARD_SIZE,
   createGame,
@@ -23,8 +24,44 @@ import {
   checkDeployedObjects,
 } from './sui-helpers';
 
+// --- 트랜잭션 결과에서 objectChanges, events, effects 추출 ---
+const extractTxInfo = async (result: any, suiClient: any): Promise<{
+  objectChanges?: any,
+  events?: any,
+  effects?: any,
+}> => {
+  if (!result) return {};
+  let effects = result.effects;
+  let objectChanges = effects?.objectChanges;
+  let events = effects?.events;
+
+  if (!objectChanges || !events) {
+    try {
+      const fullTx = await suiClient.waitForTransaction({
+        digest: result.digest,
+        options: {
+          showEffects: true,
+          showEvents: true,
+          showObjectChanges: true,
+        },
+      });
+      objectChanges = fullTx.objectChanges;
+      events = fullTx.events as any;
+      effects = fullTx.effects;
+    } catch (e) {
+      console.warn('[DEBUG] Failed to fetch full transaction:', e);
+    }
+  }
+  return { objectChanges, events, effects };
+};
+
 const TileGameFrontend: React.FC = () => {
-  const { account, signAndExecuteTransactionBlock } = useWallet();
+  // dapp-kit hooks
+  const account = useCurrentAccount();
+  const client = useSuiClient();
+  const { mutateAsync: signAndExecuteTransaction } = useSignAndExecuteTransaction();
+
+  // 상태 관리
   const [gameId, setGameId] = useState<string | null>(null);
   const [moveCapId, setMoveCapId] = useState<string | null>(null);
   const [parsedGame, setParsedGame] = useState<ParsedGame | null>(null);
@@ -34,14 +71,12 @@ const TileGameFrontend: React.FC = () => {
   const [selectedPosition, setSelectedPosition] = useState<{x: number, y: number} | null>(null);
   const [tiles, setTiles] = useState<ParsedTile[]>([]);
 
-  // Game state polling
+  // Polling
   useEffect(() => {
     if (!gameId) return;
-    const stopPoll = pollGame(gameId, (updatedGame) => {
+    const stopPoll = pollGame(client, gameId, (updatedGame) => {
       setParsedGame(updatedGame);
-      
       if (updatedGame?.status === 2 && !moveCapId && account?.address) {
-        console.log('[DEBUG] Game is playing but no MoveCap found, searching...');
         setTimeout(() => {
           findPlayerMoveCap();
         }, 1000);
@@ -50,13 +85,9 @@ const TileGameFrontend: React.FC = () => {
     return () => stopPoll();
   }, [gameId, moveCapId, account?.address]);
 
-  // Keyboard input handler
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (!parsedGame || parsedGame.status !== 2 || !moveCapId || !gameId) {
-        return;
-      }
-      
+      if (!parsedGame || parsedGame.status !== 2 || !moveCapId || !gameId) return;
       let direction: number | null = null;
       switch (e.key.toLowerCase()) {
         case 'w':
@@ -68,44 +99,28 @@ const TileGameFrontend: React.FC = () => {
         case 'a':
         case 'arrowleft': direction = 3; break;
       }
-      if (direction !== null) {
-        handleMove(direction);
-      }
+      if (direction !== null) handleMove(direction);
     };
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [parsedGame, moveCapId, gameId]);
 
-  // Fetch tiles when game has tile positions
   useEffect(() => {
     if (parsedGame?.tilePositions && parsedGame.tilePositions.length > 0) {
       fetchTiles();
     }
   }, [parsedGame?.tilePositions]);
 
-  // Transaction execution helper
-  const executeTx = async (tx: TransactionBlock) => {
+  // dapp-kit 기반 트랜잭션 실행
+  const executeTx = async (tx: Transaction) => {
     setLoading(true);
     setError(null);
     try {
-      const balance = await SUI_CLIENT.getBalance({
-        owner: account?.address || '',
-        coinType: '0x2::sui::SUI'
-      });
-      
-      tx.setGasBudget(1000000000);
+      tx.setGasBudget(1_000_000_000);
       tx.setSender(account?.address || '');
-      
-      const result = await signAndExecuteTransactionBlock({
-        transactionBlock: tx as any,
-        options: {
-          showEffects: true,
-          showEvents: true,
-          showObjectChanges: true,
-          showInput: false,
-          showRawInput: false,
-          showBalanceChanges: true,
-        },
+      const result = await signAndExecuteTransaction({
+        transaction: tx,
+        account: account ?? undefined,
       });
       return result;
     } catch (err) {
@@ -116,87 +131,57 @@ const TileGameFrontend: React.FC = () => {
     }
   };
 
-  // Create game
+  // --- 게임 생성 핸들러 ---
   const handleCreateGame = async () => {
     if (!account?.address) {
-      setError('Please connect your wallet first.');
+      setError('지갑 연결이 필요합니다.');
       return;
     }
-    
-    const tx = createGame(REGISTRY_ID);
-    const result = await executeTx(tx);
-    
-    if (result) {
-      let objectChanges = result.objectChanges;
-      let events = result.events;
-      let effects = result.effects;
-      
-      if (!objectChanges || !events) {
-        try {
-          const fullTx = await SUI_CLIENT.waitForTransactionBlock({
-            digest: result.digest,
-            options: {
-              showEffects: true,
-              showEvents: true,
-              showObjectChanges: true,
-            },
-          });
-          objectChanges = fullTx.objectChanges;
-          events = fullTx.events as any;
-          effects = fullTx.effects;
-        } catch (e) {
-          console.warn('[DEBUG] Failed to fetch full transaction:', e);
-        }
+    setLoading(true);
+    setError('');
+    try {
+      const tx = createGame(REGISTRY_ID);
+      const result = await executeTx(tx);
+
+      if (result) {
+        const { objectChanges, events, effects } = await extractTxInfo(result, client);
+
+        let newGameId = null;
+        if (objectChanges) newGameId = extractGameIdFromObjectChanges(objectChanges);
+        if (!newGameId && events) newGameId = extractGameIdFromEvents(events);
+        if (!newGameId && typeof effects === 'object') newGameId = extractGameIdFromEffects(effects);
+
+        if (newGameId) setGameId(newGameId);
+        else setError('게임 ID 추출 실패. 콘솔을 확인하세요.');
       }
-      
-      let newGameId = null;
-      
-      if (objectChanges) {
-        newGameId = extractGameIdFromObjectChanges(objectChanges);
-      }
-      
-      if (!newGameId && events) {
-        newGameId = extractGameIdFromEvents(events);
-      }
-      
-      if (!newGameId && typeof effects === 'object') {
-        newGameId = extractGameIdFromEffects(effects);
-      }
-      
-      if (newGameId) {
-        setGameId(newGameId);
-      } else {
-        setError('Could not extract game ID. Please check console manually.');
-      }
+    } catch (err) {
+      setError(`게임 생성 실패: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    } finally {
+      setLoading(false);
     }
   };
 
-  // Join game
+  // --- 게임 참가 핸들러 ---
   const handleJoinGame = async () => {
     if (!joinGameIdInput) {
       setError('Please enter a game ID.');
       return;
     }
-    
     if (!account?.address) {
       setError('Please connect your wallet first.');
       return;
     }
-    
     try {
-      const gameState = await getParsedGame(joinGameIdInput);
-      
+      const gameState = await getParsedGame(client, joinGameIdInput);
       if (!gameState) {
         setError('Game not found.');
         return;
       }
-      
       if (gameState.status !== 0) {
         setError(`Game is not joinable. Current status: ${gameState.status}`);
         return;
       }
-      
-      const balance = await SUI_CLIENT.getBalance({
+      const balance = await client.getBalance({
         owner: account.address,
         coinType: '0x2::sui::SUI'
       });
@@ -205,45 +190,50 @@ const TileGameFrontend: React.FC = () => {
         setError(`Insufficient SUI. (Need at least 0.1 SUI, current: ${balanceInSui.toFixed(4)} SUI)`);
         return;
       }
-      
       const tx = joinGame(joinGameIdInput, "");
       const result = await executeTx(tx);
-      
+
       if (result) {
-        setGameId(joinGameIdInput);
+        const { objectChanges, events, effects } = await extractTxInfo(result, client);
+
+        let joinedGameId = null;
+        if (objectChanges) joinedGameId = extractGameIdFromObjectChanges(objectChanges);
+        if (!joinedGameId && events) joinedGameId = extractGameIdFromEvents(events);
+        if (!joinedGameId && typeof effects === 'object') joinedGameId = extractGameIdFromEffects(effects);
+
+        if (joinedGameId) setGameId(joinedGameId);
+        else setGameId(joinGameIdInput); // fallback
       }
     } catch (err) {
       setError(`Failed to join game: ${err instanceof Error ? err.message : 'Unknown error'}`);
     }
   };
 
-  // Start game
+  // --- 게임 시작 핸들러 ---
   const handleStartGame = async () => {
     if (!gameId || !account?.address) {
       setError('Wallet connection and game ID required');
       return;
     }
-    
     try {
       const tx = startGame(gameId);
       const result = await executeTx(tx);
-      
+
       if (result) {
+        const { objectChanges, effects } = await extractTxInfo(result, client);
+
         let newMoveCapId = null;
-        
-        if (result.objectChanges) {
-          for (const change of result.objectChanges) {
+        if (objectChanges) {
+          for (const change of objectChanges) {
             if (change.type === 'created' && change.objectType?.includes('MoveCap')) {
               newMoveCapId = change.objectId;
               break;
             }
           }
         }
-        
-        if (!newMoveCapId && typeof result.effects === 'object') {
-          newMoveCapId = extractMoveCapIdFromEffects(result.effects);
+        if (!newMoveCapId && typeof effects === 'object') {
+          newMoveCapId = extractMoveCapIdFromEffects(effects);
         }
-        
         if (newMoveCapId) {
           setMoveCapId(newMoveCapId);
         } else {
@@ -257,18 +247,17 @@ const TileGameFrontend: React.FC = () => {
     }
   };
 
-  // Move
+  // --- 말 이동 핸들러 ---
   const handleMove = async (direction: number) => {
     if (!gameId || !moveCapId) {
       setError('Game ID or MoveCap ID required');
       return;
     }
-    
     const tx = moveWithCap(gameId, moveCapId, direction);
     await executeTx(tx);
   };
 
-  // Force timeout
+  // --- 강제 타임아웃 핸들러 ---
   const handleForceTimeout = async () => {
     if (!gameId) {
       setError('Game ID required');
@@ -278,29 +267,18 @@ const TileGameFrontend: React.FC = () => {
     await executeTx(tx);
   };
 
-  // Refresh game state
-  const handleRefreshGame = async () => {
-    if (!gameId) return;
-    try {
-      const updated = await getParsedGame(gameId);
-      setParsedGame(updated);
-    } catch (err) {
-      console.error('Failed to refresh game:', err);
-    }
-  };
-
-  // Choose start position
+  // --- 시작 위치 선택 핸들러 ---
   const handleChooseStart = async () => {
     if (!gameId || !selectedPosition || !account?.address) {
       setError('Game ID, selected position, and wallet connection required.');
       return;
     }
-
     try {
       const tx = chooseStart(gameId, selectedPosition.x, selectedPosition.y);
       const result = await executeTx(tx);
-      
+
       if (result) {
+        await extractTxInfo(result, client);
         setSelectedPosition(null);
       }
     } catch (err) {
@@ -308,12 +286,12 @@ const TileGameFrontend: React.FC = () => {
     }
   };
 
-  // Find MoveCap in player's owned objects
+  // --- Find MoveCap in player's owned objects ---
   const findPlayerMoveCap = async () => {
     if (!account?.address || !gameId) return;
 
     try {
-      const ownedObjects = await SUI_CLIENT.getOwnedObjects({
+      const ownedObjects = await client.getOwnedObjects({
         owner: account.address,
         options: {
           showContent: true,
@@ -327,7 +305,6 @@ const TileGameFrontend: React.FC = () => {
           const content = obj.data?.content;
           if (content && content.dataType === 'moveObject' && content.fields && obj.data) {
             const gameId_field = (content.fields as any).game_id;
-            
             if (gameId_field === gameId) {
               const moveCapId = obj.data.objectId;
               setMoveCapId(moveCapId);
@@ -341,58 +318,70 @@ const TileGameFrontend: React.FC = () => {
     }
   };
 
-  // Fetch tile details
+  // --- Fetch tile details ---
   const fetchTiles = async () => {
     if (!gameId || !parsedGame?.tilePositions) return;
-    
     try {
-      const tileDetails = await getTileDetails(gameId, parsedGame.tilePositions);
+      const tileDetails = await getTileDetails(client, gameId, parsedGame.tilePositions);
       setTiles(tileDetails);
     } catch (err) {
       console.error('[DEBUG] Error fetching tiles:', err);
     }
   };
 
-  // Enhanced board rendering
-  const renderBoard = () => {
-    if (!parsedGame) return null;
-    const board: string[][] = Array.from({ length: BOARD_SIZE }, () => Array(BOARD_SIZE).fill(' '));
 
-    // Player positions
-    parsedGame.playersPositions.forEach((pos, index) => {
-      if (pos.x >= 0 && pos.x < BOARD_SIZE && pos.y >= 0 && pos.y < BOARD_SIZE) {
-        board[pos.y][pos.x] = `P${index + 1}`;
+  // Helper functions for rendering the board
+  const getTileInfo = (x: number, y: number) => {
+    return tiles.find(tile => tile.position.x === x && tile.position.y === y);
+  };
+
+  const getPlayerAtPosition = (x: number, y: number) => {
+    if (!parsedGame?.playersPositions) return -1;
+    return parsedGame.playersPositions.findIndex(pos => pos.x === x && pos.y === y);
+  };
+
+  const handleCellClick = (x: number, y: number) => {
+    if (isPlacement && account?.address) {
+      setSelectedPosition({ x, y });
+    }
+  };
+
+  const handleRefreshGame = async () => {
+    if (!gameId) return;
+    try {
+      const updated = await getParsedGame(client, gameId);
+      if (updated) {
+        setParsedGame(updated);
       }
-    });
+    } catch (err) {
+      console.error('Failed to refresh game:', err);
+    }
+  };
 
-    // Tile positions
-    tiles.forEach((tile) => {
-      const {x, y} = tile.position;
-      if (x >= 0 && x < BOARD_SIZE && y >= 0 && y < BOARD_SIZE) {
-        if (board[y][x] === ' ') {
-          if (tile.claimed) {
-            board[y][x] = '✓';
-          } else {
-            board[y][x] = 'SUI_LOGO'; // Special marker for Sui logo
-          }
+  const createBoard = () => {
+    const board = [];
+    for (let y = 0; y < BOARD_SIZE; y++) {
+      const row = [];
+      for (let x = 0; x < BOARD_SIZE; x++) {
+        const tileInfo = getTileInfo(x, y);
+        const playerIndex = getPlayerAtPosition(x, y);
+        
+        if (playerIndex >= 0) {
+          row.push(`P${playerIndex + 1}`);
+        } else if (tileInfo) {
+          row.push('SUI_LOGO');
+        } else {
+          row.push('');
         }
       }
-    });
+      board.push(row);
+    }
+    return board;
+  };
 
-    const handleCellClick = (x: number, y: number) => {
-      if (isPlacement && account?.address) {
-        setSelectedPosition({x, y});
-      }
-    };
-
-    const getTileInfo = (x: number, y: number) => {
-      return tiles.find(tile => tile.position.x === x && tile.position.y === y);
-    };
-
-    const getPlayerAtPosition = (x: number, y: number) => {
-      return parsedGame?.playersPositions.findIndex(pos => pos.x === x && pos.y === y);
-    };
-
+  const renderBoard = () => {
+    const board = createBoard();
+    
     return (
       <div style={{ 
         display: 'grid', 
@@ -529,15 +518,29 @@ const TileGameFrontend: React.FC = () => {
     );
   };
 
-  // Game state helpers
-  const isWaiting = parsedGame?.status === 0;
-  const isPlacement = parsedGame?.status === 1;
-  const isPlaying = parsedGame?.status === 2;
-  const isEnded = parsedGame?.status === 3 || parsedGame?.tilesRemaining === 0 || !!parsedGame?.winner;
-  
-  const bothPlayersPlaced = parsedGame?.hasPlaced && parsedGame.hasPlaced.length === 2 && 
-    parsedGame.hasPlaced[0] && parsedGame.hasPlaced[1];
-  const canStart = isPlacement && parsedGame?.players.length >= 2 && bothPlayersPlaced;
+// Game state helpers (방어적 리팩터링)
+const isWaiting = parsedGame?.status === 0;
+const isPlacement = parsedGame?.status === 1;
+const isPlaying = parsedGame?.status === 2;
+const isEnded =
+  parsedGame?.status === 3 ||
+  (typeof parsedGame?.tilesRemaining === 'number' && parsedGame.tilesRemaining === 0) ||
+  (!!parsedGame?.winner && typeof parsedGame.winner === 'string' && parsedGame.winner !== '');
+
+const hasPlacedArr: boolean[] = Array.isArray(parsedGame?.hasPlaced)
+  ? parsedGame?.hasPlaced.map(Boolean) || []
+  : [];
+
+const bothPlayersPlaced =
+  hasPlacedArr.length >= 2 &&
+  hasPlacedArr[0] === true &&
+  hasPlacedArr[1] === true;
+
+const canStart =
+  isPlacement &&
+  Array.isArray(parsedGame?.players) &&
+  parsedGame.players.length >= 2 &&
+  bothPlayersPlaced;
 
   return (
     <div style={{ 
@@ -687,7 +690,7 @@ const TileGameFrontend: React.FC = () => {
                     </div>
                     
                     <button 
-                      onClick={checkDeployedObjects}
+                      onClick={() => checkDeployedObjects(client)}
                       style={{
                         padding: '10px 20px',
                         fontSize: '0.9rem',

@@ -1,19 +1,17 @@
-import { SuiClient } from '@mysten/sui.js/client';
-import { TransactionBlock } from '@mysten/sui.js/transactions';
+import { SuiClient } from '@mysten/sui/client';
+import { Transaction } from '@mysten/sui/transactions';
 
 // 네트워크 / 클라이언트 설정
 export const NETWORK = 'testnet';
-export const SUI_CLIENT = new SuiClient({ url: `https://fullnode.${NETWORK}.sui.io:443` });
-
 // 패키지/오브젝트 상수 - 새로 배포된 패키지 ID
 export const PACKAGE_ID = '0x5ef053bccf5ceb726968b36738295bd55b2e41eec9b5cf91a81c680e3adae16a';
 export const REGISTRY_ID = '0xe8192d5e26092007e59b0d513d8bbd715d0a2cafdb64636b7cbed6118b2c14c2';
 
 // Debug function to check if objects exist and inspect package modules
-export async function checkDeployedObjects() {
+export async function checkDeployedObjects(client: SuiClient) {
   console.log('[DEBUG] Checking package:', PACKAGE_ID);
   try {
-    const pkg = await SUI_CLIENT.getObject({
+    const pkg = await client.getObject({
       id: PACKAGE_ID,
       options: { showContent: true, showType: true }
     });
@@ -21,7 +19,7 @@ export async function checkDeployedObjects() {
     
     // Try to get normalized modules to inspect function signatures
     try {
-      const normalizedModules = await SUI_CLIENT.getNormalizedMoveModulesByPackage({
+      const normalizedModules = await client.getNormalizedMoveModulesByPackage({
         package: PACKAGE_ID
       });
       console.log('[DEBUG] Package modules:', normalizedModules);
@@ -47,7 +45,7 @@ export async function checkDeployedObjects() {
 
   console.log('[DEBUG] Checking registry:', REGISTRY_ID);
   try {
-    const registry = await SUI_CLIENT.getObject({
+    const registry = await client.getObject({
       id: REGISTRY_ID,
       options: { showContent: true, showType: true }
     });
@@ -67,10 +65,10 @@ export function createGame(registryId: string) {
   console.log('[DEBUG] - PACKAGE_ID:', PACKAGE_ID);
   console.log('[DEBUG] - REGISTRY_ID:', registryId);
   
-  const tx = new TransactionBlock();
-  tx.moveCall({
+  const tx = new Transaction();
+  (tx as any).moveCall({
     target: `${PACKAGE_ID}::tile_game_core::create_game`,
-    arguments: [tx.object(registryId)],
+    arguments: [(tx as any).object(registryId)],
   });
   return tx;
 }
@@ -81,21 +79,18 @@ export function joinGame(gameId: string, coinId: string) {
   console.log('[DEBUG] - gameId:', gameId);
   console.log('[DEBUG] - coinId:', coinId);
   
-  const tx = new TransactionBlock();
+  const tx = new Transaction();
   
   try {
-    // Create the game object input first
-    const gameObj = tx.object(gameId);
-    
     // Use gas coin (SUI default) and split exactly 0.05 SUI (50_000_000 MIST) for joining fee
-    const [feeAmount] = tx.splitCoins(tx.gas, [tx.pure.u64(50_000_000)]);
+    const [feeAmount] = (tx as any).splitCoins((tx as any).gas, [(tx as any).pure.u64(50_000_000)]);
     console.log('[DEBUG] Split coin created successfully');
     
-    tx.moveCall({
+    (tx as any).moveCall({
       target: `${PACKAGE_ID}::tile_game_core::join_game`,
       arguments: [
-        gameObj,     // game: &mut Game
-        feeAmount,   // fee: Coin<SUI>
+        (tx as any).object(gameId),     // game: &mut Game
+        feeAmount,                      // fee: Coin<SUI>
       ],
     });
     console.log('[DEBUG] Move call added successfully');
@@ -112,14 +107,14 @@ export function chooseStart(gameId: string, x: number, y: number) {
   console.log('[DEBUG] - gameId:', gameId);
   console.log('[DEBUG] - position: (', x, ',', y, ')');
   
-  const tx = new TransactionBlock();
+  const tx = new Transaction();
   
-  tx.moveCall({
+  (tx as any).moveCall({
     target: `${PACKAGE_ID}::tile_game_core::choose_start`,
     arguments: [
-      tx.object(gameId),
-      tx.pure.u8(x),
-      tx.pure.u8(y),
+      (tx as any).object(gameId),
+      (tx as any).pure.u8(x),
+      (tx as any).pure.u8(y),
     ],
   });
   
@@ -127,16 +122,16 @@ export function chooseStart(gameId: string, x: number, y: number) {
 }
 
 export function startGame(gameId: string) {
-  const tx = new TransactionBlock();
+  const tx = new Transaction();
   
   console.log('[DEBUG] Creating startGame transaction for gameId:', gameId);
   console.log('[DEBUG] Using CLOCK_ID:', CLOCK_ID);
   
-  tx.moveCall({
+  (tx as any).moveCall({
     target: `${PACKAGE_ID}::tile_game_core::start_game`,
     arguments: [
-      tx.object(gameId),
-      tx.object(CLOCK_ID),
+      (tx as any).object(gameId),
+      (tx as any).object(CLOCK_ID),
     ],
   });
   return tx;
@@ -147,26 +142,26 @@ export function moveWithCap(
   moveCapId: string,
   direction: number
 ) {
-  const tx = new TransactionBlock();
-  tx.moveCall({
+  const tx = new Transaction();
+  (tx as any).moveCall({
     target: `${PACKAGE_ID}::tile_game_core::move_with_cap`,
     arguments: [
-      tx.object(gameId),
-      tx.object(moveCapId),
-      tx.pure.u8(direction),
-      tx.object(CLOCK_ID),
+      (tx as any).object(gameId),
+      (tx as any).object(moveCapId),
+      (tx as any).pure.u8(direction),
+      (tx as any).object(CLOCK_ID),
     ],
   });
   return tx;
 }
 
 export function forceTimeoutMove(gameId: string) {
-  const tx = new TransactionBlock();
-  tx.moveCall({
+  const tx = new Transaction();
+  (tx as any).moveCall({
     target: `${PACKAGE_ID}::tile_game_core::force_timeout_move`,
     arguments: [
-      tx.object(gameId),
-      tx.object(CLOCK_ID),
+      (tx as any).object(gameId),
+      (tx as any).object(CLOCK_ID),
     ],
   });
   return tx;
@@ -175,8 +170,8 @@ export function forceTimeoutMove(gameId: string) {
 // --------------------------------------------------
 // 코인 검색
 // --------------------------------------------------
-export async function findSuiCoin(address: string, amount: bigint) {
-  const coins = await SUI_CLIENT.getCoins({
+export async function findSuiCoin(client: SuiClient, address: string, amount: bigint) {
+  const coins = await client.getCoins({
     owner: address,
     coinType: '0x2::sui::SUI',
   });
@@ -189,15 +184,15 @@ export async function findSuiCoin(address: string, amount: bigint) {
 // --------------------------------------------------
 // 오브젝트 fetch
 // --------------------------------------------------
-export async function fetchGame(gameId: string) {
-  return SUI_CLIENT.getObject({
+export async function fetchGame(client: SuiClient, gameId: string) {
+  return client.getObject({
     id: gameId,
     options: { showContent: true },
   });
 }
 
-export async function fetchMoveCap(moveCapId: string) {
-  return SUI_CLIENT.getObject({
+export async function fetchMoveCap(client: SuiClient, moveCapId: string) {
+  return client.getObject({
     id: moveCapId,
     options: { showContent: true },
   });
@@ -434,8 +429,8 @@ export function extractMoveCapIdFromEffects(effects: any): string | null {
 // --------------------------------------------------
 // 트랜잭션 전체 조회 (digest 재조회)
 // --------------------------------------------------
-export async function fetchFullTransaction(digest: string) {
-  return SUI_CLIENT.waitForTransactionBlock({
+export async function fetchFullTransaction(client: SuiClient, digest: string) {
+  return client.waitForTransaction({
     digest,
     options: {
       showEvents: true,
@@ -450,8 +445,8 @@ export async function fetchFullTransaction(digest: string) {
 // --------------------------------------------------
 // 편의 함수: 게임 한 번에 가져와 파싱
 // --------------------------------------------------
-export async function getParsedGame(gameId: string): Promise<ParsedGame | null> {
-  const obj = await fetchGame(gameId);
+export async function getParsedGame(client: SuiClient, gameId: string): Promise<ParsedGame | null> {
+  const obj = await fetchGame(client, gameId);
   const content = obj?.data?.content;
   console.log('[DEBUG] Raw game object:', obj);
   console.log('[DEBUG] Game content:', content);
@@ -461,13 +456,13 @@ export async function getParsedGame(gameId: string): Promise<ParsedGame | null> 
 }
 
 // Fetch detailed tile information for each tile position
-export async function getTileDetails(gameId: string, positions: ParsedPlayerPosition[]): Promise<ParsedTile[]> {
+export async function getTileDetails(client: SuiClient, gameId: string, positions: ParsedPlayerPosition[]): Promise<ParsedTile[]> {
   const tiles: ParsedTile[] = [];
   
   for (const pos of positions) {
     try {
       // Fetch the dynamic object field for this position
-      const tileObj = await SUI_CLIENT.getDynamicFieldObject({
+      const tileObj = await client.getDynamicFieldObject({
         parentId: gameId,
         name: {
           type: `${PACKAGE_ID}::tile_game_core::Coord`,
@@ -516,6 +511,7 @@ export async function getTileDetails(gameId: string, positions: ParsedPlayerPosi
 // 폴링 유틸: 2초 단위 새로고침 (start 버튼 자동 노출용)
 // --------------------------------------------------
 export function pollGame(
+  client: SuiClient,
   gameId: string,
   onUpdate: (parsed: ParsedGame) => void,
   intervalMs = 2000,
@@ -525,7 +521,7 @@ export function pollGame(
 
   const run = async () => {
     try {
-      const parsed = await getParsedGame(gameId);
+      const parsed = await getParsedGame(client, gameId);
       if (parsed && !stopped) {
         onUpdate(parsed);
       }
@@ -547,3 +543,4 @@ export function pollGame(
     clearInterval(handle);
   };
 }
+
