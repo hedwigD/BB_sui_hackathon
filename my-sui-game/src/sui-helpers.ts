@@ -4,8 +4,8 @@ import { Transaction } from '@mysten/sui/transactions';
 // 네트워크 / 클라이언트 설정
 export const NETWORK = 'testnet';
 // 패키지/오브젝트 상수 - 새로 배포된 패키지 ID
-export const PACKAGE_ID = '0x76a8d76097d73e798831f018a9b23f96f75c23a4fcc96f2501a49c14c0a85b35';
-export const REGISTRY_ID = '0xd1982bab529f5644f9d4aeb504f36f7f4ada73531e15f93c37caa4a0b86a149d';
+export const PACKAGE_ID = '0xc06a4d7426ab1de9810a0fc1da38468adb71f5d4c576c5ed37098a1e25df31c7';
+export const REGISTRY_ID = '0x36bd7c1e1f7a243fe647d837ac5543f7a726ecf3a801996c5020dfbec1da0e03';
 
 // Debug function to check if objects exist and inspect package modules
 export async function checkDeployedObjects(client: SuiClient) {
@@ -55,7 +55,7 @@ export async function checkDeployedObjects(client: SuiClient) {
   }
 }
 export const CLOCK_ID = '0x6';
-export const BOARD_SIZE = 10; // Match contract BOARD_SIZE
+export const BOARD_SIZE = 6; // Match contract BOARD_SIZE
 
 // --------------------------------------------------
 // 트랜잭션 빌더
