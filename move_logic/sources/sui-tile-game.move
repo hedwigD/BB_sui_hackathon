@@ -5,11 +5,12 @@ use sui::event;
 use sui::coin::{Self, Coin};
 use sui::sui::SUI;
 use sui::dynamic_object_field as dof;
-use sui::object::{Self, ID, UID};
+use sui::object;
 use sui::tx_context::{Self, TxContext};
 use sui::transfer;
 use std::option::{Self, Option};
-use sui::vec_set::{Self, VecSet};
+use sui::vec_set;
+use sui::random::{Random, new_generator, generate_u8_in_range, generate_u64_in_range};
 
 // --------------------------------------------------
 // Constants / Errors
@@ -278,6 +279,7 @@ public entry fun choose_start(game: &mut Game, x: u8, y: u8, ctx: &mut TxContext
 public entry fun start_game(
     game: &mut Game,
     clock: &Clock,
+    rnd: &Random,
     ctx: &mut TxContext
 ) {
     assert!(game.status.value == STATUS_PLACEMENT, E_GAME_NOT_ACTIVE);
@@ -292,7 +294,7 @@ public entry fun start_game(
     assert!(coin::value(&game.pot) == TOTAL_POT, E_WRONG_FUNDING_AMOUNT);
 
     // 타일 생성 (pot을 10개로 쪼개서 각 타일에 배정)
-    create_tiles(game, clock, ctx);
+    create_tiles(game, rnd, ctx);
 
     // MoveCap 생성 및 전송
     create_move_caps(game, ctx);
@@ -415,25 +417,50 @@ public entry fun force_timeout_move(
 // --------------------------------------------------
 // Tile generation / capture
 // --------------------------------------------------
-fun create_tiles(game: &mut Game, clock: &Clock, ctx: &mut TxContext) {
+fun create_tiles(game: &mut Game, rnd: &Random, ctx: &mut TxContext) {
     let mut placed_positions = vec_set::empty<Coord>();
+    let mut generator = new_generator(rnd, ctx);
     let mut i = 0;
+
+    // 총 10개를 5쌍으로 묶고 각 쌍에 대해 편차를 랜덤 생성
+    let mut reward_values = vector::empty<u64>();
+    let base_value = TILE_REWARD; // 기준값 (1단위라고 가정)
+    let total_reward = base_value * 10;
+    let mut total_assigned = 0;
+
+    let mut j = 0;
+    while (j < 5) {
+        let delta = generate_u64_in_range(&mut generator, 0, base_value / 2); // 편차 범위: 0 ~ base/2
+        let v1 = base_value + delta;
+        let v2 = base_value - delta;
+        vector::push_back(&mut reward_values, v1);
+        vector::push_back(&mut reward_values, v2);
+        total_assigned = total_assigned + v1 + v2;
+        j = j + 1;
+    };
+
+    // 총합 보정 (u64)
+    if (total_assigned != total_reward) {
+        let last_idx = vector::length(&reward_values) - 1;
+        let old_val = *vector::borrow(&reward_values, last_idx);
+        *vector::borrow_mut(&mut reward_values, last_idx) = old_val + (total_reward - total_assigned);
+    };
+
+    // reward_values의 값들을 사용하여 타일 생성
     while (i < MAX_TILES) {
-        // pot에서 TILE_REWARD만큼 split
-        assert!(coin::value(&game.pot) >= TILE_REWARD, E_INSUFFICIENT_POT);
-        let reward_coin = coin::split(&mut game.pot, TILE_REWARD, ctx);
+        let reward_value = *vector::borrow(&reward_values, i);
+        assert!(coin::value(&game.pot) >= reward_value, E_INSUFFICIENT_POT);
+        let reward_coin = coin::split(&mut game.pot, reward_value, ctx);
 
         // 중복되지 않는 위치 생성
-        let mut pos: Coord;
-
-        let mut attempts = 0;
+        let mut pos = Coord { x: 0, y: 0 };
         loop {
-            let seed = clock::timestamp_ms(clock) + i + attempts;
-            pos = pseudo_position(seed, game.board_size);
+            let x = generate_u8_in_range(&mut generator, 0, game.board_size - 1);
+            let y = generate_u8_in_range(&mut generator, 0, game.board_size - 1);
+            pos = Coord { x, y };
             if (!vec_set::contains(&placed_positions, &pos)) {
-                break
-            };
-            attempts = attempts + 1;
+                break;
+            }
         };
 
         vec_set::insert(&mut placed_positions, pos);
@@ -447,15 +474,14 @@ fun create_tiles(game: &mut Game, clock: &Clock, ctx: &mut TxContext) {
             owner: option::none<address>(),
         };
 
-        // Game의 dynamic object field에 추가 (키: Coord, 값: SuiTile)
         dof::add(&mut game.id, pos, tile);
-
-        // 조회용 position 목록 추가
         vector::push_back(&mut game.tile_positions, pos);
-
         i = i + 1;
     };
+
 }
+
+
 
 fun capture_if_tile(game: &mut Game, player_uindex: u64, _ctx: &mut TxContext) {
     if (game.tiles_remaining == 0) return;
@@ -563,12 +589,6 @@ fun apply_direction(pos: Coord, dir: u8, size: u8): Coord {
     } else {
         pos
     }
-}
-
-fun pseudo_position(seed: u64, size: u8): Coord {
-    let x = ((seed * 17 + 5) % (size as u64)) as u8;
-    let y = ((seed * 19 + 11) % (size as u64)) as u8;
-    Coord { x, y }
 }
 
 fun contains_address(addrs: &vector<address>, target: address): bool {
