@@ -1166,15 +1166,15 @@ const canStart =
                             }}>
                               <div style={{ 
                                 display: 'flex', 
-                                justifyContent: 'space-between',
+                                justifyContent: 'center',
                                 marginBottom: '8px'
                               }}>
-                                <span style={{ fontWeight: 'bold' }}>({tile.position.x}, {tile.position.y})</span>
+                                
                                 <span style={{ color: '#FFE066' }}>{(tile.value/1000000000).toFixed(3)} SUI</span>
                               </div>
                               <div style={{ 
                                 display: 'flex',
-                                justifyContent: 'space-between',
+                                justifyContent: 'center',
                                 alignItems: 'center'
                               }}>
                                 <span style={{

@@ -477,14 +477,9 @@ export async function getTileDetails(client: SuiClient, gameId: string, position
         const fields = tileObj.data.content.fields as any;
         const reward = fields.reward;
         let value = 0;
-        
-        // Extract reward value if it exists
-        if (reward && reward.fields && reward.fields.vec && reward.fields.vec.length > 0) {
-          const coinFields = reward.fields.vec[0]?.fields;
-          if (coinFields && coinFields.balance) {
-            value = Number(coinFields.balance);
-          }
-        }
+            if (!(fields.claimed)) {
+              value = Number(reward.fields.balance);
+            }
         
         tiles.push({
           position: pos,
