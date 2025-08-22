@@ -151,7 +151,18 @@ const TileGameFrontend: React.FC = () => {
         if (!newGameId && events) newGameId = extractGameIdFromEvents(events);
         if (!newGameId && typeof effects === 'object') newGameId = extractGameIdFromEffects(effects);
 
-        if (newGameId) setGameId(newGameId);
+        if (newGameId) {
+          setGameId(newGameId);
+
+          // ✅ [추가] 바로 joinGame() 실행
+          const joinTx = joinGame(newGameId, '');
+          const joinResult = await executeTx(joinTx);
+
+          if (!joinResult) {
+            setError('게임 생성은 성공했지만 참가에 실패했습니다.');
+          }
+        }
+
         else setError('게임 ID 추출 실패. 콘솔을 확인하세요.');
       }
     } catch (err) {

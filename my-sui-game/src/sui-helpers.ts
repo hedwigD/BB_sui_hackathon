@@ -4,8 +4,8 @@ import { Transaction } from '@mysten/sui/transactions';
 // 네트워크 / 클라이언트 설정
 export const NETWORK = 'testnet';
 // 패키지/오브젝트 상수 - 새로 배포된 패키지 ID
-export const PACKAGE_ID = '0xc06a4d7426ab1de9810a0fc1da38468adb71f5d4c576c5ed37098a1e25df31c7';
-export const REGISTRY_ID = '0x36bd7c1e1f7a243fe647d837ac5543f7a726ecf3a801996c5020dfbec1da0e03';
+export const PACKAGE_ID = '0x0ddc098482f84713bdff095f96fc31002e4778c24c882783c3ef38de61da2816';
+export const REGISTRY_ID = '0xe275efea7a752b2152ef22f1850f184615819c463f5c84d49366d10bc7d46205';
 
 // Debug function to check if objects exist and inspect package modules
 export async function checkDeployedObjects(client: SuiClient) {
