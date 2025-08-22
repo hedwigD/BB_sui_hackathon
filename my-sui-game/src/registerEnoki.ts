@@ -3,8 +3,8 @@ import { useSuiClientContext } from '@mysten/dapp-kit';
 import { isEnokiNetwork, registerEnokiWallets } from '@mysten/enoki';
 
 
-const ENOKI_PUBLIC_API_KEY = process.env.VITE_ENOKI_PUBLIC_API_KEY as string;
-const GOOGLE_OAUTH_CLIENT_ID = process.env.VITE_GOOGLE_OAUTH_CLIENT_ID as string;
+const ENOKI_PUBLIC_API_KEY = process.env.REACT_APP_ENOKI_PUBLIC_API_KEY as string;
+const GOOGLE_OAUTH_CLIENT_ID = process.env.REACT_APP_GOOGLE_OAUTH_CLIENT_ID as string;
 
 
 function Register() {
