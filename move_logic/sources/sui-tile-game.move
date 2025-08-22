@@ -15,7 +15,7 @@ use sui::random::{Random, new_generator, generate_u8_in_range, generate_u64_in_r
 // --------------------------------------------------
 // Constants / Errors
 // --------------------------------------------------
-const BOARD_SIZE: u8 = 10;                  // 10x10
+const BOARD_SIZE: u8 = 6;                  // 10x10
 const MAX_TILES: u64 = 10;
 const TURN_TIMEOUT_MS: u64 = 3000;
 const DEFAULT_CAP_MOVES: u64 = 10000;
@@ -430,7 +430,7 @@ fun create_tiles(game: &mut Game, rnd: &Random, ctx: &mut TxContext) {
 
     let mut j = 0;
     while (j < 5) {
-        let delta = generate_u64_in_range(&mut generator, 0, base_value / 2); // 편차 범위: 0 ~ base/2
+        let delta = generate_u64_in_range(&mut generator, 0, base_value*9 / 10); // 편차 범위: 0 ~ base/2
         let v1 = base_value + delta;
         let v2 = base_value - delta;
         vector::push_back(&mut reward_values, v1);
