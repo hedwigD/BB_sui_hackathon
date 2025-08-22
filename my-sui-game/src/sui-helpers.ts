@@ -4,8 +4,8 @@ import { Transaction } from '@mysten/sui/transactions';
 // 네트워크 / 클라이언트 설정
 export const NETWORK = 'testnet';
 // 패키지/오브젝트 상수 - 새로 배포된 패키지 ID
-export const PACKAGE_ID = '0x5ef053bccf5ceb726968b36738295bd55b2e41eec9b5cf91a81c680e3adae16a';
-export const REGISTRY_ID = '0xe8192d5e26092007e59b0d513d8bbd715d0a2cafdb64636b7cbed6118b2c14c2';
+export const PACKAGE_ID = '0x76a8d76097d73e798831f018a9b23f96f75c23a4fcc96f2501a49c14c0a85b35';
+export const REGISTRY_ID = '0xd1982bab529f5644f9d4aeb504f36f7f4ada73531e15f93c37caa4a0b86a149d';
 
 // Debug function to check if objects exist and inspect package modules
 export async function checkDeployedObjects(client: SuiClient) {
@@ -132,6 +132,7 @@ export function startGame(gameId: string) {
     arguments: [
       (tx as any).object(gameId),
       (tx as any).object(CLOCK_ID),
+      (tx as any).object("0x8"),
     ],
   });
   return tx;
