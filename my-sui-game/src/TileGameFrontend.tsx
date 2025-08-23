@@ -556,7 +556,16 @@ const canStart =
   return (
     <div style={{ 
       minHeight: '100vh',
-      background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+      background: `
+        url('/sui-logo.png'),
+        radial-gradient(circle at 20% 30%, rgba(52, 152, 219, 0.3) 0%, transparent 50%),
+        radial-gradient(circle at 80% 20%, rgba(30, 144, 255, 0.2) 0%, transparent 50%),
+        radial-gradient(circle at 40% 70%, rgba(65, 105, 225, 0.3) 0%, transparent 50%),
+        linear-gradient(135deg, #667eea 0%, #764ba2 100%)
+      `,
+      backgroundSize: 'cover, auto, auto, auto, cover',
+      backgroundPosition: 'center, 20% 30%, 80% 20%, 40% 70%, center',
+      backgroundRepeat: 'no-repeat',
       color: '#fff',
       fontFamily: 'system-ui, -apple-system, sans-serif'
     }}>
@@ -572,13 +581,13 @@ const canStart =
           <h1 style={{
             fontSize: '3rem',
             fontWeight: 'bold',
-            background: 'linear-gradient(45deg, #FFE066, #FF6B6B)',
+            background: 'linear-gradient(45deg, #21f1eeff, #daff6bff)',
             backgroundClip: 'text',
             WebkitBackgroundClip: 'text',
             color: 'transparent',
             textShadow: '0 4px 8px rgba(0,0,0,0.3)',
             margin: '0 0 20px 0'
-          }}>🎮 Sui Tile Game</h1>
+          }}>Tile Rush</h1>
           <div style={{
             display: 'inline-block',
             padding: '10px 20px',
